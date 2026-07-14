@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Anaphora Annotator</title>
+<title>Anaphora &amp; Action Switch Annotator</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1a1a2e; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
@@ -22,6 +22,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .btn-danger { background: #8b0000; color: #fff; }
 .btn-danger:hover { background: #a00000; }
 .btn-sm { padding: 3px 8px; font-size: 11px; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
 
 .main { display: flex; flex: 1; overflow: hidden; }
 
@@ -30,8 +31,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .search-box { padding: 8px; border-bottom: 1px solid #0f3460; }
 .search-box input { width: 100%; padding: 7px 10px; border: 1px solid #0f3460; border-radius: 4px; background: #1a1a2e; color: #e0e0e0; font-size: 13px; }
 .search-box input:focus { outline: none; border-color: #e94560; }
-.filter-row { display: flex; gap: 4px; padding: 4px 8px; border-bottom: 1px solid #0f3460; }
-.filter-btn { flex: 1; padding: 4px; border: 1px solid #0f3460; border-radius: 3px; background: transparent; color: #888; font-size: 11px; cursor: pointer; text-align: center; }
+.filter-row { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 8px; border-bottom: 1px solid #0f3460; }
+.filter-btn { flex: 1 1 54px; padding: 4px; border: 1px solid #0f3460; border-radius: 3px; background: transparent; color: #888; font-size: 11px; cursor: pointer; text-align: center; }
+.filter-btn[data-filter="switch_pending"] { flex-basis: 100px; }
 .filter-btn.active { background: #0f3460; color: #e0e0e0; border-color: #e94560; }
 .list-status { padding: 6px 10px; font-size: 11px; color: #666; border-bottom: 1px solid #0f3460; }
 .episode-list { flex: 1; overflow-y: auto; }
@@ -45,6 +47,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .tag-cat { background: #1a3a5c; color: #7fb3e0; }
 .tag-vid { background: #1a3c2a; color: #7fcc8e; }
 .tag-mod { background: #3c3a1a; color: #cccc7f; }
+.tag-switch { background: #153c31; color: #72d6a8; }
+.tag-pending { background: #4a241e; color: #ff9c8d; }
 
 /* Right panel */
 .right-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
@@ -59,6 +63,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .segment-card { background: #16213e; border: 1px solid #0f3460; border-radius: 6px; margin-bottom: 16px; overflow: hidden; }
 .segment-card.has-anaphora { border-left: 3px solid #ff9800; }
 .segment-card.modified { border-left: 3px solid #4caf50; }
+.segment-card.switch-incomplete { box-shadow: 0 0 0 1px #a64040; }
 
 .seg-header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #0f2040; border-bottom: 1px solid #0f3460; }
 .seg-header .seg-id { font-weight: 700; font-size: 13px; color: #e94560; }
@@ -91,6 +96,25 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .edit-input { padding: 5px 8px; border: 1px solid #0f3460; border-radius: 4px; background: #1a1a2e; color: #e0e0e0; font-size: 13px; font-family: inherit; }
 .edit-input:focus { outline: none; border-color: #e94560; }
 .edit-input.wide { width: 300px; }
+
+/* Required action-switch annotation */
+.switch-editor { margin: 10px 0 12px; padding: 10px; border: 1px solid #7a3434; border-radius: 5px; background: #21192a; }
+.switch-editor.complete { border-color: #2e7d58; background: #142822; }
+.switch-title { display: flex; align-items: center; gap: 8px; color: #eee; font-size: 13px; font-weight: 700; }
+.required-badge { padding: 1px 6px; border-radius: 8px; background: #842f3d; color: #ffd7dc; font-size: 10px; text-transform: uppercase; letter-spacing: .4px; }
+.switch-help { margin: 4px 0 8px; color: #8f8f9f; font-size: 11px; }
+.switch-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.switch-time-input { width: 112px; }
+.video-clock { min-width: 60px; color: #8fbce7; font-size: 12px; font-variant-numeric: tabular-nums; }
+.no-switch-option { display: inline-flex; align-items: center; gap: 5px; margin-left: 8px; color: #ccc; font-size: 12px; cursor: pointer; }
+.no-switch-option input { accent-color: #e94560; }
+.switch-chips { display: flex; flex-wrap: wrap; gap: 5px; min-height: 27px; margin-top: 8px; align-items: center; }
+.switch-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 12px; background: #174b3c; color: #9be5c3; font-size: 12px; font-variant-numeric: tabular-nums; }
+.switch-chip-remove { border: 0; padding: 0; background: transparent; color: #ff8393; font-size: 15px; font-weight: 700; line-height: 1; cursor: pointer; }
+.switch-empty { color: #d77d73; font-size: 11px; }
+.switch-editor.complete .switch-empty { color: #72d6a8; }
+.switch-validation { margin-top: 5px; min-height: 15px; color: #e67e73; font-size: 11px; }
+.switch-editor.complete .switch-validation { color: #72d6a8; }
 
 /* Body parts checkbox grid */
 .bp-grid { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
@@ -127,7 +151,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 <body>
 
 <div class="topbar">
-  <span class="title">Anaphora Annotator</span>
+  <span class="title">Anaphora &amp; Action Switch Annotator</span>
   <span class="info" id="globalInfo">Loading...</span>
   <span class="spacer"></span>
   <button class="btn btn-primary" onclick="saveAll()">Save All to File</button>
@@ -143,6 +167,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
       <div class="filter-btn" data-filter="modified" onclick="setFilter('modified')">Modified</div>
       <div class="filter-btn" data-filter="unmodified" onclick="setFilter('unmodified')">Unmodified</div>
       <div class="filter-btn" data-filter="has_video" onclick="setFilter('has_video')">Has Video</div>
+      <div class="filter-btn" data-filter="switch_pending" onclick="setFilter('switch_pending')">Switch Pending</div>
     </div>
     <div class="list-status" id="listStatus">-</div>
     <div class="episode-list" id="episodeList"></div>
@@ -198,12 +223,14 @@ let currentEpisodeId = null;
 let currentEpisodeData = null;
 let searchTimer = null;
 let currentFilter = 'all';
+let statusTimer = null;
 
 async function fetchInfo() {
   const r = await fetch(`${BASE}/api/info`);
   const d = await r.json();
   document.getElementById('globalInfo').textContent =
-    `${d.total_entries} entries | ${d.total_episodes} episodes | ${d.modified_count} modified`;
+    `${d.total_entries} entries | ${d.total_episodes} episodes | ${d.modified_count} modified | ` +
+    `${d.action_switch_annotated_count}/${d.total_entries} switch annotated`;
 }
 
 async function loadEpisodeList() {
@@ -224,7 +251,16 @@ function renderEpisodeList(items) {
     if (it.category) tags += `<span class="tag tag-cat">${esc(it.category)}</span>`;
     if (it.sample_key) tags += `<span class="tag tag-cat">#${esc(it.sample_key)}</span>`;
     if (it.has_video) tags += `<span class="tag tag-vid">video</span>`;
-    if (it.all_modified) tags += `<span class="tag tag-mod">done</span>`;
+    if (it.all_modified && it.all_action_switch_annotated) {
+      tags += `<span class="tag tag-mod">done</span>`;
+    } else if (it.has_modified) {
+      tags += `<span class="tag tag-mod">edited</span>`;
+    }
+    if (it.all_action_switch_annotated) {
+      tags += `<span class="tag tag-switch">switch done</span>`;
+    } else {
+      tags += `<span class="tag tag-pending">switch ${it.switch_annotated_count}/${it.num_segments}</span>`;
+    }
     return `<div class="${cls}" onclick="loadEpisode('${esc(it.episode_id)}')">
       <div class="ep-name">${esc(it.episode_id)}</div>
       <div class="ep-meta">${it.num_segments} segments ${tags}</div>
@@ -263,22 +299,26 @@ function renderEpisode(data) {
 
     const depsStr = (seg.depends_on_segment_ids || []).join(', ');
     const bodyParts = seg.keep_body_parts || [];
+    const switchTimes = normalizeActionSwitchTimes(seg.action_switch_times || []);
+    const noActionSwitch = Boolean(seg.no_action_switch);
+    const switchComplete = noActionSwitch || switchTimes.length > 0;
 
     return `
-    <div class="${cardCls}" data-seg-index="${si}">
+    <div class="${cardCls} ${switchComplete ? 'switch-complete' : 'switch-incomplete'}" data-seg-index="${si}">
       <div class="seg-header">
         <span class="seg-id">Segment ${seg.target_segment_id}</span>
         <span class="seg-video">${esc(seg.target_video_name)}</span>
         ${seg.babel_category ? `<span class="seg-cat">${esc(seg.babel_category)}</span>` : ''}
         ${seg.is_target_segment ? '<span class="seg-cat">target</span>' : ''}
         ${seg.segment_length ? `<span class="seg-cat">len ${esc(seg.segment_length)}</span>` : ''}
+        <span class="seg-cat" data-role="switch-tag">${switchComplete ? 'switch ✓' : 'switch required'}</span>
         ${seg.is_modified ? '<span style="color:#4caf50;font-size:11px;margin-left:auto">modified</span>' : ''}
       </div>
       <div class="seg-body">
         <div class="seg-row">
           <div class="seg-video-area">
             ${seg.has_video
-              ? `<video controls loop muted autoplay src="${BASE}/api/video_by_name/${encodeURIComponent(seg.target_video_name)}"></video>`
+              ? `<video controls loop muted autoplay data-role="segment-video" data-si="${si}" src="${BASE}/api/video_by_name/${encodeURIComponent(seg.target_video_name)}"></video>`
               : `<div class="no-video">No video available</div>`
             }
           </div>
@@ -292,6 +332,32 @@ function renderEpisode(data) {
               <div class="field-label">FlowMDM Caption</div>
               <div class="field-value">${esc(seg.flowmdm_caption)}</div>
             </div>` : ''}
+
+            <div class="switch-editor ${switchComplete ? 'complete' : 'incomplete'}" data-switch-editor data-si="${si}" data-has-video="${seg.has_video ? 'true' : 'false'}">
+              <div class="switch-title">
+                Action switch times
+                <span class="required-badge">required</span>
+              </div>
+              <div class="switch-help">Play the video to an action boundary and mark the current position. Times are stored as seconds from the start of the video.</div>
+              <div class="switch-controls">
+                <button type="button" class="btn btn-sm btn-primary" data-action="mark-current" onclick="markCurrentTime(${si})" ${(!seg.has_video || noActionSwitch) ? 'disabled' : ''}>Mark current time</button>
+                <span class="video-clock" data-role="video-clock">0.000s</span>
+                <input type="number" min="0" step="0.001" class="edit-input switch-time-input" data-field="action_switch_time_input" data-si="${si}" placeholder="seconds" ${noActionSwitch ? 'disabled' : ''} onkeydown="if(event.key==='Enter'){event.preventDefault();addManualSwitchTime(${si})}">
+                <button type="button" class="btn btn-sm btn-secondary" data-action="add-switch" onclick="addManualSwitchTime(${si})" ${noActionSwitch ? 'disabled' : ''}>Add</button>
+                <label class="no-switch-option">
+                  <input type="checkbox" data-field="no_action_switch" data-si="${si}" ${noActionSwitch ? 'checked' : ''} onchange="setNoActionSwitch(${si}, this.checked)">
+                  No action switch in this video
+                </label>
+              </div>
+              <div class="switch-chips" data-si="${si}">
+                ${noActionSwitch
+                  ? '<span class="switch-empty">Explicitly marked: no action switch</span>'
+                  : (switchTimes.length
+                    ? switchTimes.map(time => switchTimeChipHtml(time, si)).join('')
+                    : '<span class="switch-empty">No switch time marked yet</span>')}
+              </div>
+              <div class="switch-validation" data-role="switch-validation">${switchComplete ? 'Action-switch annotation complete.' : 'Mark at least one time, or explicitly select no action switch.'}</div>
+            </div>
 
             <div class="edit-row">
               <label>event_anaphora:</label>
@@ -347,6 +413,16 @@ function renderEpisode(data) {
       label.style.color = this.checked ? '#ff9800' : '#555';
     });
   });
+
+  container.querySelectorAll('video[data-role="segment-video"]').forEach(video => {
+    const updateClock = () => {
+      const card = video.closest('.segment-card');
+      const clock = card.querySelector('[data-role="video-clock"]');
+      if (clock) clock.textContent = `${video.currentTime.toFixed(3)}s`;
+    };
+    video.addEventListener('timeupdate', updateClock);
+    video.addEventListener('loadedmetadata', updateClock);
+  });
 }
 
 function toggleContext(si) {
@@ -395,38 +471,188 @@ function removeCustomBodyPart(si, part) {
   });
 }
 
+// Action-switch time annotation
+function normalizeActionSwitchTimes(values) {
+  return [...new Set((values || [])
+    .map(value => Number(value))
+    .filter(value => Number.isFinite(value) && value > 0)
+    .map(value => Number(value.toFixed(3))))]
+    .sort((a, b) => a - b);
+}
+
+function formatSwitchTime(time) {
+  return `${Number(time).toFixed(3)}s`;
+}
+
+function switchTimeChipHtml(time, si) {
+  const normalized = Number(Number(time).toFixed(3));
+  return `<span class="switch-chip" data-time="${normalized}">
+    ${formatSwitchTime(normalized)}
+    <button type="button" class="switch-chip-remove" aria-label="Remove ${formatSwitchTime(normalized)}" onclick="removeSwitchTime(${si}, ${normalized})">&times;</button>
+  </span>`;
+}
+
+function getActionSwitchTimesForSeg(si) {
+  const container = document.querySelector(`.switch-chips[data-si="${si}"]`);
+  if (!container) return [];
+  return normalizeActionSwitchTimes(
+    [...container.querySelectorAll('.switch-chip')].map(chip => chip.dataset.time)
+  );
+}
+
+function renderActionSwitchTimes(si, times, noActionSwitch = false) {
+  const container = document.querySelector(`.switch-chips[data-si="${si}"]`);
+  if (!container) return;
+  const normalized = normalizeActionSwitchTimes(times);
+  if (noActionSwitch) {
+    container.innerHTML = '<span class="switch-empty">Explicitly marked: no action switch</span>';
+  } else if (normalized.length) {
+    container.innerHTML = normalized.map(time => switchTimeChipHtml(time, si)).join('');
+  } else {
+    container.innerHTML = '<span class="switch-empty">No switch time marked yet</span>';
+  }
+}
+
+function updateActionSwitchEditorState(si) {
+  const editor = document.querySelector(`[data-switch-editor][data-si="${si}"]`);
+  if (!editor) return;
+  const card = editor.closest('.segment-card');
+  const noSwitch = editor.querySelector('input[data-field="no_action_switch"]').checked;
+  const times = getActionSwitchTimesForSeg(si);
+  const complete = noSwitch || times.length > 0;
+  const hasVideo = editor.dataset.hasVideo === 'true';
+
+  editor.classList.toggle('complete', complete);
+  editor.classList.toggle('incomplete', !complete);
+  card.classList.toggle('switch-complete', complete);
+  card.classList.toggle('switch-incomplete', !complete);
+
+  const input = editor.querySelector('input[data-field="action_switch_time_input"]');
+  const addButton = editor.querySelector('[data-action="add-switch"]');
+  const markButton = editor.querySelector('[data-action="mark-current"]');
+  input.disabled = noSwitch;
+  addButton.disabled = noSwitch;
+  markButton.disabled = noSwitch || !hasVideo;
+
+  const validation = editor.querySelector('[data-role="switch-validation"]');
+  validation.textContent = complete
+    ? 'Action-switch annotation complete.'
+    : 'Mark at least one time, or explicitly select no action switch.';
+  const tag = card.querySelector('[data-role="switch-tag"]');
+  tag.textContent = complete ? 'switch \u2713' : 'switch required';
+}
+
+function addActionSwitchTime(si, rawTime) {
+  const time = Number(rawTime);
+  if (!Number.isFinite(time) || time <= 0) {
+    showStatus('Switch time must be greater than 0 seconds.', true);
+    return false;
+  }
+
+  const card = document.querySelector(`.segment-card[data-seg-index="${si}"]`);
+  const video = card.querySelector('video[data-role="segment-video"]');
+  if (video && Number.isFinite(video.duration) && video.duration > 0 && time >= video.duration) {
+    showStatus(`Switch time must be before the video ends at ${video.duration.toFixed(3)}s.`, true);
+    return false;
+  }
+
+  const normalized = Number(time.toFixed(3));
+  const times = getActionSwitchTimesForSeg(si);
+  if (times.includes(normalized)) {
+    showStatus(`${formatSwitchTime(normalized)} is already marked.`, true);
+    return false;
+  }
+
+  times.push(normalized);
+  renderActionSwitchTimes(si, times, false);
+  updateActionSwitchEditorState(si);
+  return true;
+}
+
+function markCurrentTime(si) {
+  const card = document.querySelector(`.segment-card[data-seg-index="${si}"]`);
+  const video = card.querySelector('video[data-role="segment-video"]');
+  if (!video) {
+    showStatus('No video is available for this segment.', true);
+    return;
+  }
+  if (addActionSwitchTime(si, video.currentTime)) {
+    showStatus(`Marked action switch at ${formatSwitchTime(video.currentTime)}.`);
+  }
+}
+
+function addManualSwitchTime(si) {
+  const input = document.querySelector(`input[data-field="action_switch_time_input"][data-si="${si}"]`);
+  if (addActionSwitchTime(si, input.value)) input.value = '';
+}
+
+function removeSwitchTime(si, time) {
+  const normalized = Number(Number(time).toFixed(3));
+  const times = getActionSwitchTimesForSeg(si).filter(value => value !== normalized);
+  renderActionSwitchTimes(si, times, false);
+  updateActionSwitchEditorState(si);
+}
+
+function setNoActionSwitch(si, checked) {
+  const existingTimes = getActionSwitchTimesForSeg(si);
+  const checkbox = document.querySelector(`input[data-field="no_action_switch"][data-si="${si}"]`);
+  if (checked && existingTimes.length && !window.confirm('This will remove the marked switch times. Continue?')) {
+    checkbox.checked = false;
+    return;
+  }
+  renderActionSwitchTimes(si, checked ? [] : existingTimes, checked);
+  updateActionSwitchEditorState(si);
+}
+
 // Collect current form state
 function collectSegmentData() {
-  if (!currentEpisodeData) return [];
-  return currentEpisodeData.segments.map((seg, si) => {
+  if (!currentEpisodeData) return {segments: [], errors: []};
+  const errors = [];
+  const segments = currentEpisodeData.segments.map((seg, si) => {
     const card = document.querySelector(`.segment-card[data-seg-index="${si}"]`);
     const anaphora = card.querySelector('input[data-field="event_anaphora"]').checked;
     const depsRaw = card.querySelector('input[data-field="depends_on"]').value;
     const deps = depsRaw.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
     const bodyParts = getBodyPartsForSeg(si);
+    const actionSwitchTimes = getActionSwitchTimesForSeg(si);
+    const noActionSwitch = card.querySelector('input[data-field="no_action_switch"]').checked;
+    if ((!noActionSwitch && actionSwitchTimes.length === 0) || (noActionSwitch && actionSwitchTimes.length > 0)) {
+      errors.push({si, segmentId: seg.target_segment_id});
+    }
     return {
       index: seg.index,
       event_anaphora: anaphora,
       depends_on_segment_ids: deps,
       keep_body_parts: bodyParts,
+      action_switch_times: actionSwitchTimes,
+      no_action_switch: noActionSwitch,
     };
   });
+  return {segments, errors};
 }
 
 async function saveEpisode() {
-  const segments = collectSegmentData();
+  const {segments, errors} = collectSegmentData();
+  if (errors.length) {
+    const firstCard = document.querySelector(`.segment-card[data-seg-index="${errors[0].si}"]`);
+    firstCard.scrollIntoView({behavior: 'smooth', block: 'center'});
+    showStatus(`Action-switch annotation required for segment ${errors[0].segmentId}.`, true);
+    return;
+  }
   const r = await fetch(`${BASE}/api/update_episode`, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({segments}),
   });
   const d = await r.json();
-  if (d.ok) {
+  if (r.ok && d.ok) {
     showStatus(`Episode saved (${d.updated} segments)`);
     fetchInfo();
     loadEpisodeList();
     // Reload to show modified state
     loadEpisode(currentEpisodeId);
+  } else {
+    showStatus(d.error || 'Could not save the episode.', true);
   }
 }
 
@@ -463,10 +689,12 @@ function setFilter(f) {
   loadEpisodeList();
 }
 
-function showStatus(msg) {
+function showStatus(msg, isError = false) {
   const el = document.getElementById('bottomStatus');
   el.textContent = msg;
-  setTimeout(() => { el.textContent = ''; }, 3000);
+  el.style.color = isError ? '#ff7b8b' : '#4caf50';
+  clearTimeout(statusTimer);
+  statusTimer = setTimeout(() => { el.textContent = ''; }, isError ? 5000 : 3000);
 }
 
 function esc(s) {

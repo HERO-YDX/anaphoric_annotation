@@ -2,12 +2,13 @@
 """Anaphora annotation tool - Flask backend."""
 '''
 Usage:
-python3 /mnt/work/motion2025/annotation_tool/app.py --host 0.0.0.0 --port 8888
-python3 /mnt/work/motion2025/annotation_tool/app.py '/mnt/work/motion2025/meta/test_anaphora_per_category4_full_episodes.jsonl' '/mnt/work/motion2025/meta/test_videos' --host 0.0.0.0 --port 8888
+python3 app.py --host 0.0.0.0 --port 8888
+python3 app.py meta/input.jsonl meta/test_videos --host 0.0.0.0 --port 8888
 '''
-import json
-import os
 import argparse
+import json
+import math
+import os
 from collections import OrderedDict
 from pathlib import Path
 from flask import Flask, render_template, jsonify, request, send_file, abort
@@ -27,10 +28,12 @@ DATA = {
     "video_paths": {},           # video token/name -> absolute file path
 }
 
-DEFAULT_RESULTS_ROOT = Path("/mnt/work/motion2025/flowmdm_ours_results")
-DEFAULT_HUMANML_JSON = DEFAULT_RESULTS_ROOT / "humanml_test_set_anaphora.json"
-DEFAULT_KWARGS_ROOT = DEFAULT_RESULTS_ROOT / "flowmdm_results"
-DEFAULT_RENDER_ROOT = DEFAULT_RESULTS_ROOT / "blender_render_flowmdm"
+APP_ROOT = Path(__file__).resolve().parent
+DEFAULT_META_ROOT = APP_ROOT / "meta"
+DEFAULT_ELMA_JSONL = DEFAULT_META_ROOT / "test_anaphora_per_category4_full_episodes.jsonl"
+DEFAULT_ELMA_VIDEO_ROOT = DEFAULT_META_ROOT / "test_videos"
+DEFAULT_FLOWMDM_ROOT = APP_ROOT / "flowmdm_ours_results"
+DEFAULT_KWARGS_ROOT = DEFAULT_FLOWMDM_ROOT / "flowmdm_results"
 
 
 def load_jsonl(path):
@@ -110,6 +113,8 @@ def build_flowmdm_entries(humanml_path, kwargs_root, video_root):
                 "event_anaphora": target_idx == segment_index,
                 "depends_on_segment_ids": [],
                 "keep_body_parts": [],
+                "action_switch_times": [],
+                "no_action_switch": False,
             })
 
     return entries
@@ -134,6 +139,77 @@ def resolve_video_path(video_name):
     return None
 
 
+def normalize_action_switch_times(values):
+    """Validate, round, de-duplicate, and sort action-switch times in seconds."""
+    if values is None:
+        return []
+    if not isinstance(values, list):
+        raise ValueError("action_switch_times must be a JSON array")
+
+    normalized = []
+    for value in values:
+        if isinstance(value, bool):
+            raise ValueError("action-switch times must be numbers")
+        try:
+            seconds = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("action-switch times must be numbers") from exc
+        if not math.isfinite(seconds) or seconds <= 0:
+            raise ValueError("action-switch times must be greater than 0 seconds")
+        seconds = round(seconds, 3)
+        if seconds <= 0:
+            raise ValueError("action-switch times must be greater than 0 seconds")
+        normalized.append(seconds)
+
+    return sorted(set(normalized))
+
+
+def action_switch_annotation(entry):
+    """Return normalized switch times and the explicit no-switch decision."""
+    try:
+        times = normalize_action_switch_times(entry.get("action_switch_times", []))
+    except ValueError:
+        times = []
+    no_switch = entry.get("no_action_switch") is True
+    return times, no_switch
+
+
+def is_action_switch_annotated(entry):
+    """A completed annotation has timestamps or an explicit no-switch decision."""
+    try:
+        times = normalize_action_switch_times(entry.get("action_switch_times", []))
+    except ValueError:
+        return False
+    no_switch = entry.get("no_action_switch") is True
+    return (no_switch and not times) or (not no_switch and bool(times))
+
+
+def apply_action_switch_annotation(entry, payload):
+    """Apply and validate required action-switch fields on an entry copy."""
+    raw_times = payload.get(
+        "action_switch_times", entry.get("action_switch_times", [])
+    )
+    raw_no_switch = payload.get(
+        "no_action_switch", entry.get("no_action_switch", False)
+    )
+    if not isinstance(raw_no_switch, bool):
+        raise ValueError("no_action_switch must be a boolean")
+
+    times = normalize_action_switch_times(raw_times)
+    if raw_no_switch and times:
+        raise ValueError(
+            "choose either action-switch times or no_action_switch, not both"
+        )
+    if not raw_no_switch and not times:
+        raise ValueError(
+            "mark at least one action-switch time or select no_action_switch"
+        )
+
+    entry["action_switch_times"] = times
+    entry["no_action_switch"] = raw_no_switch
+    return entry
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -141,10 +217,16 @@ def index():
 
 @app.route("/api/info")
 def api_info():
+    current_entries = [
+        DATA["modified"].get(i, entry) for i, entry in enumerate(DATA["entries"])
+    ]
     return jsonify({
         "total_entries": len(DATA["entries"]),
         "total_episodes": len(DATA["episode_ids"]),
         "modified_count": len(DATA["modified"]),
+        "action_switch_annotated_count": sum(
+            is_action_switch_annotated(entry) for entry in current_entries
+        ),
         "output_path": DATA["output_path"],
     })
 
@@ -160,6 +242,11 @@ def api_episode_list():
         indices = DATA["episodes"][ep_id]
         has_modified = any(i in DATA["modified"] for i in indices)
         all_modified = all(i in DATA["modified"] for i in indices)
+        switch_annotated_count = sum(
+            is_action_switch_annotated(DATA["modified"].get(i, DATA["entries"][i]))
+            for i in indices
+        )
+        all_action_switch_annotated = switch_annotated_count == len(indices)
         has_video = any(
             resolve_video_path(DATA["entries"][i].get("target_video_name", "")) is not None
             for i in indices
@@ -170,6 +257,8 @@ def api_episode_list():
         if filter_type == "unmodified" and all_modified:
             continue
         if filter_type == "has_video" and not has_video:
+            continue
+        if filter_type == "switch_pending" and all_action_switch_annotated:
             continue
 
         if q:
@@ -193,6 +282,8 @@ def api_episode_list():
             "first_index": indices[0],
             "has_modified": has_modified,
             "all_modified": all_modified,
+            "switch_annotated_count": switch_annotated_count,
+            "all_action_switch_annotated": all_action_switch_annotated,
             "has_video": has_video,
             "category": DATA["entries"][indices[0]].get("babel_category", ""),
             "sample_index": DATA["entries"][indices[0]].get("sample_index"),
@@ -215,6 +306,7 @@ def api_episode(episode_id):
         mod = DATA["modified"].get(i)
         current = mod if mod else entry
         video_name = entry.get("target_video_name", "")
+        switch_times, no_switch = action_switch_annotation(current)
         segments.append({
             "index": i,
             "target_segment_id": entry.get("target_segment_id"),
@@ -226,6 +318,9 @@ def api_episode(episode_id):
             "event_anaphora": current.get("event_anaphora", False),
             "depends_on_segment_ids": current.get("depends_on_segment_ids", []),
             "keep_body_parts": current.get("keep_body_parts", []),
+            "action_switch_times": switch_times,
+            "no_action_switch": no_switch,
+            "action_switch_annotated": is_action_switch_annotated(current),
             # Context fields
             "anaphoric_expression_in_target": current.get("anaphoric_expression_in_target", ""),
             "antecedent_expression": current.get("antecedent_expression", ""),
@@ -267,9 +362,14 @@ def api_video_by_name(video_name):
 @app.route("/api/update", methods=["POST"])
 def api_update():
     """Update editable fields for a single entry."""
-    data = request.json
+    data = request.get_json(silent=True) or {}
     idx = data.get("index")
-    if idx is None or idx < 0 or idx >= len(DATA["entries"]):
+    if (
+        isinstance(idx, bool)
+        or not isinstance(idx, int)
+        or idx < 0
+        or idx >= len(DATA["entries"])
+    ):
         abort(400)
     # Start from existing modified version if present, otherwise from original
     base = DATA["modified"].get(idx, DATA["entries"][idx])
@@ -280,6 +380,10 @@ def api_update():
         modified_entry["depends_on_segment_ids"] = data["depends_on_segment_ids"]
     if "keep_body_parts" in data:
         modified_entry["keep_body_parts"] = data["keep_body_parts"]
+    try:
+        apply_action_switch_annotation(modified_entry, data)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
     modified_entry["annotated"] = True
     DATA["modified"][idx] = modified_entry
     return jsonify({"ok": True, "modified_count": len(DATA["modified"])})
@@ -288,12 +392,24 @@ def api_update():
 @app.route("/api/update_episode", methods=["POST"])
 def api_update_episode():
     """Batch update all segments of an episode."""
-    data = request.json
+    data = request.get_json(silent=True) or {}
     segments = data.get("segments", [])
-    count = 0
+    if not isinstance(segments, list) or not segments:
+        return jsonify({"ok": False, "error": "No segments were submitted."}), 400
+    pending_updates = []
+    errors = []
     for seg in segments:
+        if not isinstance(seg, dict):
+            errors.append({"index": None, "error": "segment must be an object"})
+            continue
         idx = seg.get("index")
-        if idx is None or idx < 0 or idx >= len(DATA["entries"]):
+        if (
+            isinstance(idx, bool)
+            or not isinstance(idx, int)
+            or idx < 0
+            or idx >= len(DATA["entries"])
+        ):
+            errors.append({"index": idx, "error": "invalid segment index"})
             continue
         base = DATA["modified"].get(idx, DATA["entries"][idx])
         modified_entry = dict(base)
@@ -303,10 +419,28 @@ def api_update_episode():
             modified_entry["depends_on_segment_ids"] = seg["depends_on_segment_ids"]
         if "keep_body_parts" in seg:
             modified_entry["keep_body_parts"] = seg["keep_body_parts"]
+        try:
+            apply_action_switch_annotation(modified_entry, seg)
+        except ValueError as exc:
+            errors.append({"index": idx, "error": str(exc)})
+            continue
         modified_entry["annotated"] = True
+        pending_updates.append((idx, modified_entry))
+
+    if errors:
+        return jsonify({
+            "ok": False,
+            "error": "Action-switch annotation is required for every segment.",
+            "details": errors,
+        }), 400
+
+    for idx, modified_entry in pending_updates:
         DATA["modified"][idx] = modified_entry
-        count += 1
-    return jsonify({"ok": True, "updated": count, "modified_count": len(DATA["modified"])})
+    return jsonify({
+        "ok": True,
+        "updated": len(pending_updates),
+        "modified_count": len(DATA["modified"]),
+    })
 
 
 @app.route("/api/delete_annotation", methods=["POST"])
@@ -338,14 +472,21 @@ def main():
     parser.add_argument(
         "jsonl",
         nargs="?",
-        default=str(DEFAULT_HUMANML_JSON),
-        help="Path to input JSONL file, or FlowMDM humanml_test_set_anaphora.json",
+        default=str(DEFAULT_ELMA_JSONL),
+        help=(
+            "Path to input JSONL file, or FlowMDM humanml_test_set_anaphora.json "
+            "(default: meta/test_anaphora_per_category4_full_episodes.jsonl "
+            "relative to app.py)"
+        ),
     )
     parser.add_argument(
         "video_root",
         nargs="?",
-        default=str(DEFAULT_RENDER_ROOT),
-        help="Path to video directory, or FlowMDM blender_render_flowmdm directory",
+        default=str(DEFAULT_ELMA_VIDEO_ROOT),
+        help=(
+            "Path to video directory, or FlowMDM blender_render_flowmdm directory "
+            "(default: meta/test_videos relative to app.py)"
+        ),
     )
     parser.add_argument(
         "--kwargs-root",

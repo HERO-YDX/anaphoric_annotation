@@ -8,6 +8,8 @@ their videos and correcting event-anaphora annotations.
 - Browse and search episodes and captions.
 - Play the video associated with each motion segment.
 - Edit `event_anaphora`, `depends_on_segment_ids`, and `keep_body_parts`.
+- Mark one or more action-switch times directly from the video player.
+- Require an explicit `no_action_switch` decision when a video has no switch.
 - Save annotations as JSONL and resume from an existing output file.
 - Read either a flat JSONL/video layout or FlowMDM result directories.
 
@@ -23,7 +25,31 @@ python -m pip install -r requirements.txt
 
 ## Usage
 
-### Flat JSONL and video directory
+### Default ELMA layout
+
+Put the ELMA JSONL and videos in the repository-local `meta/` directory:
+
+```text
+anaphoric_annotation/
+├── app.py
+└── meta/
+    ├── test_anaphora_per_category4_full_episodes.jsonl
+    └── test_videos/
+        └── *.mp4
+```
+
+Then start the default ELMA annotator without absolute data paths:
+
+```bash
+python app.py --host 127.0.0.1 --port 8888
+```
+
+The defaults are resolved relative to the directory containing `app.py`, not
+the current shell directory. This means the same command and repository layout
+remain portable after cloning or moving the project. See [`meta/README.md`](meta/README.md)
+for the complete local data layout.
+
+### Custom flat JSONL and video directory
 
 ```bash
 python app.py /path/to/input.jsonl /path/to/videos \
@@ -40,6 +66,31 @@ Each JSONL record should normally contain:
 
 The editable annotation fields may already be present or will use empty
 defaults.
+
+Every saved segment must also complete the action-switch annotation using one
+of these mutually exclusive forms:
+
+```json
+{
+  "action_switch_times": [1.275, 3.84],
+  "no_action_switch": false
+}
+```
+
+or:
+
+```json
+{
+  "action_switch_times": [],
+  "no_action_switch": true
+}
+```
+
+Times are measured in seconds from the beginning of the segment video, rounded
+to millisecond precision, de-duplicated, and stored in ascending order. The UI
+validates that marked times are inside the video duration when metadata is
+available. Existing annotation files that do not contain either decision are
+treated as incomplete and must be reviewed again.
 
 ### FlowMDM results
 
@@ -65,6 +116,14 @@ If the output file already exists and has the same number of entries, records
 marked with `"annotated": true` are loaded automatically so annotation can
 continue from the previous session.
 
+## Tests
+
+```bash
+python -m unittest discover -s tests -v
+```
+
 ## Data
 
-Datasets and video files are not included in this repository.
+Datasets, generated annotations, and video files are not included in this
+repository. The contents of `meta/` are ignored by Git except for its README;
+copy or link the ELMA data into that directory after cloning.
