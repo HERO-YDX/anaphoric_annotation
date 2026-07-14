@@ -12,7 +12,6 @@ their videos and correcting event-anaphora annotations.
 - Mark one or more action-switch times directly from the video player.
 - Require an explicit `no_action_switch` decision when a video has no switch.
 - Save annotations as JSONL and resume from an existing output file.
-- Read either a flat JSONL/video layout or FlowMDM result directories.
 
 ## Installation
 
@@ -92,17 +91,6 @@ to millisecond precision, de-duplicated, and stored in ascending order. The UI
 validates that marked times are inside the video duration when metadata is
 available. Existing annotation files that do not contain either decision are
 treated as incomplete and must be reviewed again.
-
-### FlowMDM results
-
-```bash
-python app.py /path/to/humanml_test_set_anaphora.json \
-  /path/to/blender_render_flowmdm \
-  --kwargs-root /path/to/flowmdm_results \
-  --flowmdm \
-  --host 127.0.0.1 \
-  --port 8888
-```
 
 Open <http://127.0.0.1:8888> in a browser after the server starts.
 
