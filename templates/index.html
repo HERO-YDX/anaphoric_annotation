@@ -96,6 +96,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .edit-input { padding: 5px 8px; border: 1px solid #0f3460; border-radius: 4px; background: #1a1a2e; color: #e0e0e0; font-size: 13px; font-family: inherit; }
 .edit-input:focus { outline: none; border-color: #e94560; }
 .edit-input.wide { width: 300px; }
+.caption-input { width: 100%; min-height: 58px; box-sizing: border-box; resize: vertical; line-height: 1.4; }
 
 /* Required action-switch annotation */
 .switch-editor { margin: 10px 0 12px; padding: 10px; border: 1px solid #7a3434; border-radius: 5px; background: #21192a; }
@@ -325,7 +326,7 @@ function renderEpisode(data) {
           <div class="seg-fields">
             <div class="field-group">
               <div class="field-label">Caption</div>
-              <div class="field-value">${esc(seg.target_caption)}</div>
+              <textarea class="edit-input caption-input" data-field="target_caption" data-si="${si}" rows="2" placeholder="Enter caption">${esc(seg.target_caption)}</textarea>
             </div>
             ${seg.flowmdm_caption && seg.flowmdm_caption !== seg.target_caption ? `
             <div class="field-group">
@@ -610,17 +611,33 @@ function collectSegmentData() {
   const errors = [];
   const segments = currentEpisodeData.segments.map((seg, si) => {
     const card = document.querySelector(`.segment-card[data-seg-index="${si}"]`);
+    const captionInput = card.querySelector('textarea[data-field="target_caption"]');
+    const targetCaption = captionInput.value.trim();
     const anaphora = card.querySelector('input[data-field="event_anaphora"]').checked;
     const depsRaw = card.querySelector('input[data-field="depends_on"]').value;
     const deps = depsRaw.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
     const bodyParts = getBodyPartsForSeg(si);
     const actionSwitchTimes = getActionSwitchTimesForSeg(si);
     const noActionSwitch = card.querySelector('input[data-field="no_action_switch"]').checked;
+    if (!targetCaption) {
+      errors.push({
+        si,
+        segmentId: seg.target_segment_id,
+        field: 'target_caption',
+        message: `Caption is required for segment ${seg.target_segment_id}.`,
+      });
+    }
     if ((!noActionSwitch && actionSwitchTimes.length === 0) || (noActionSwitch && actionSwitchTimes.length > 0)) {
-      errors.push({si, segmentId: seg.target_segment_id});
+      errors.push({
+        si,
+        segmentId: seg.target_segment_id,
+        field: 'action_switch',
+        message: `Action-switch annotation required for segment ${seg.target_segment_id}.`,
+      });
     }
     return {
       index: seg.index,
+      target_caption: targetCaption,
       event_anaphora: anaphora,
       depends_on_segment_ids: deps,
       keep_body_parts: bodyParts,
@@ -636,7 +653,10 @@ async function saveEpisode() {
   if (errors.length) {
     const firstCard = document.querySelector(`.segment-card[data-seg-index="${errors[0].si}"]`);
     firstCard.scrollIntoView({behavior: 'smooth', block: 'center'});
-    showStatus(`Action-switch annotation required for segment ${errors[0].segmentId}.`, true);
+    if (errors[0].field === 'target_caption') {
+      firstCard.querySelector('textarea[data-field="target_caption"]').focus();
+    }
+    showStatus(errors[0].message, true);
     return;
   }
   const r = await fetch(`${BASE}/api/update_episode`, {
@@ -652,7 +672,10 @@ async function saveEpisode() {
     // Reload to show modified state
     loadEpisode(currentEpisodeId);
   } else {
-    showStatus(d.error || 'Could not save the episode.', true);
+    const detail = Array.isArray(d.details) && d.details.length
+      ? `Segment ${d.details[0].index}: ${d.details[0].error}`
+      : (d.error || 'Could not save the episode.');
+    showStatus(detail, true);
   }
 }
 

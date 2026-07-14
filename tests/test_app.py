@@ -106,6 +106,27 @@ class ActionSwitchValidationTests(unittest.TestCase):
         )
 
 
+class CaptionValidationTests(unittest.TestCase):
+    def test_caption_is_trimmed_and_saved(self):
+        entry = {"target_caption": "original"}
+
+        annotation_app.apply_target_caption(
+            entry,
+            {"target_caption": "  revised caption  "},
+        )
+
+        self.assertEqual(entry["target_caption"], "revised caption")
+
+    def test_caption_rejects_empty_and_non_string_values(self):
+        for caption in ("", "   ", None, 123, []):
+            with self.subTest(caption=caption):
+                with self.assertRaises(ValueError):
+                    annotation_app.apply_target_caption(
+                        {"target_caption": "original"},
+                        {"target_caption": caption},
+                    )
+
+
 class AnnotationApiTests(unittest.TestCase):
     def setUp(self):
         annotation_app.app.config.update(TESTING=True)
@@ -137,6 +158,7 @@ class AnnotationApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Action switch times", response.data)
         self.assertIn(b"No action switch in this video", response.data)
+        self.assertIn(b'data-field="target_caption"', response.data)
 
     def test_episode_update_is_atomic_when_switch_annotation_is_missing(self):
         response = self.client.post(
@@ -168,11 +190,13 @@ class AnnotationApiTests(unittest.TestCase):
                 "segments": [
                     {
                         "index": 0,
+                        "target_caption": "  revised first action  ",
                         "action_switch_times": [3.2, 1.1, 3.2],
                         "no_action_switch": False,
                     },
                     {
                         "index": 1,
+                        "target_caption": "revised second action",
                         "action_switch_times": [],
                         "no_action_switch": True,
                     },
@@ -186,10 +210,67 @@ class AnnotationApiTests(unittest.TestCase):
             annotation_app.DATA["modified"][0]["action_switch_times"],
             [1.1, 3.2],
         )
+        self.assertEqual(
+            annotation_app.DATA["modified"][0]["target_caption"],
+            "revised first action",
+        )
         self.assertTrue(annotation_app.DATA["modified"][1]["no_action_switch"])
+
+        episode = self.client.get("/api/episode/episode-1").get_json()
+        self.assertEqual(
+            [segment["target_caption"] for segment in episode["segments"]],
+            ["revised first action", "revised second action"],
+        )
+        search = self.client.get("/api/episode_list?q=revised%20second").get_json()
+        self.assertEqual(
+            [result["episode_id"] for result in search["results"]],
+            ["episode-1"],
+        )
 
         info = self.client.get("/api/info").get_json()
         self.assertEqual(info["action_switch_annotated_count"], 2)
+
+    def test_episode_update_is_atomic_when_caption_is_invalid(self):
+        response = self.client.post(
+            "/api/update_episode",
+            json={
+                "segments": [
+                    {
+                        "index": 0,
+                        "target_caption": "   ",
+                        "action_switch_times": [1.5],
+                        "no_action_switch": False,
+                    },
+                    {
+                        "index": 1,
+                        "target_caption": "valid caption",
+                        "action_switch_times": [],
+                        "no_action_switch": True,
+                    },
+                ]
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.get_json()["ok"])
+        self.assertEqual(annotation_app.DATA["modified"], {})
+
+    def test_single_update_saves_caption(self):
+        response = self.client.post(
+            "/api/update",
+            json={
+                "index": 0,
+                "target_caption": "single edited caption",
+                "action_switch_times": [],
+                "no_action_switch": True,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            annotation_app.DATA["modified"][0]["target_caption"],
+            "single edited caption",
+        )
 
     def test_completed_episode_exports_valid_jsonl_in_original_order(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -206,11 +287,13 @@ class AnnotationApiTests(unittest.TestCase):
                     "segments": [
                         {
                             "index": 0,
+                            "target_caption": "exported first caption",
                             "action_switch_times": [3.2, 1.1, 3.2],
                             "no_action_switch": False,
                         },
                         {
                             "index": 1,
+                            "target_caption": "second action",
                             "action_switch_times": [],
                             "no_action_switch": True,
                         },
@@ -237,6 +320,10 @@ class AnnotationApiTests(unittest.TestCase):
             self.assertEqual(
                 [entry["target_segment_id"] for entry in exported_entries],
                 [1, 2],
+            )
+            self.assertEqual(
+                [entry["target_caption"] for entry in exported_entries],
+                ["exported first caption", "second action"],
             )
             self.assertEqual(exported_entries[0]["action_switch_times"], [1.1, 3.2])
             self.assertFalse(exported_entries[0]["no_action_switch"])

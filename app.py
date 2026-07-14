@@ -285,6 +285,21 @@ def apply_action_switch_annotation(entry, payload):
     return entry
 
 
+def apply_target_caption(entry, payload):
+    """Apply a non-empty editable target caption when it is submitted."""
+    if "target_caption" not in payload:
+        return entry
+
+    caption = payload["target_caption"]
+    if not isinstance(caption, str):
+        raise ValueError("target_caption must be a string")
+    caption = caption.strip()
+    if not caption:
+        raise ValueError("target_caption must not be empty")
+    entry["target_caption"] = caption
+    return entry
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -342,7 +357,7 @@ def api_episode_list():
                 match = True
             else:
                 for i in indices:
-                    e = DATA["entries"][i]
+                    e = DATA["modified"].get(i, DATA["entries"][i])
                     cap = (e.get("target_caption") or "").lower()
                     cat = (e.get("babel_category") or "").lower()
                     if q in cap or q in cat:
@@ -386,7 +401,7 @@ def api_episode(episode_id):
             "index": i,
             "target_segment_id": entry.get("target_segment_id"),
             "target_video_name": video_name,
-            "target_caption": entry.get("target_caption", ""),
+            "target_caption": current.get("target_caption", ""),
             "has_video": resolve_video_path(video_name) is not None,
             "is_modified": i in DATA["modified"],
             # Editable fields - current values
@@ -456,6 +471,7 @@ def api_update():
     if "keep_body_parts" in data:
         modified_entry["keep_body_parts"] = data["keep_body_parts"]
     try:
+        apply_target_caption(modified_entry, data)
         apply_action_switch_annotation(modified_entry, data)
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
@@ -495,6 +511,7 @@ def api_update_episode():
         if "keep_body_parts" in seg:
             modified_entry["keep_body_parts"] = seg["keep_body_parts"]
         try:
+            apply_target_caption(modified_entry, seg)
             apply_action_switch_annotation(modified_entry, seg)
         except ValueError as exc:
             errors.append({"index": idx, "error": str(exc)})
@@ -505,7 +522,7 @@ def api_update_episode():
     if errors:
         return jsonify({
             "ok": False,
-            "error": "Action-switch annotation is required for every segment.",
+            "error": "One or more segment annotations are invalid.",
             "details": errors,
         }), 400
 
