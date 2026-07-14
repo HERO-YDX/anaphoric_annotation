@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Anaphora Annotator</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1a1a2e; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
+
+.topbar { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: #16213e; border-bottom: 1px solid #0f3460; flex-shrink: 0; }
+.topbar .title { font-weight: 700; font-size: 15px; color: #e94560; white-space: nowrap; }
+.topbar .info { font-size: 13px; color: #888; }
+.topbar .spacer { flex: 1; }
+.btn { padding: 6px 14px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all .15s; display: inline-flex; align-items: center; gap: 4px; }
+.btn-primary { background: #e94560; color: #fff; }
+.btn-primary:hover { background: #c73a52; }
+.btn-secondary { background: #0f3460; color: #e0e0e0; }
+.btn-secondary:hover { background: #1a4a7a; }
+.btn-success { background: #2e7d32; color: #fff; }
+.btn-success:hover { background: #388e3c; }
+.btn-danger { background: #8b0000; color: #fff; }
+.btn-danger:hover { background: #a00000; }
+.btn-sm { padding: 3px 8px; font-size: 11px; }
+
+.main { display: flex; flex: 1; overflow: hidden; }
+
+/* Left panel */
+.left-panel { width: 320px; display: flex; flex-direction: column; border-right: 1px solid #0f3460; background: #16213e; flex-shrink: 0; }
+.search-box { padding: 8px; border-bottom: 1px solid #0f3460; }
+.search-box input { width: 100%; padding: 7px 10px; border: 1px solid #0f3460; border-radius: 4px; background: #1a1a2e; color: #e0e0e0; font-size: 13px; }
+.search-box input:focus { outline: none; border-color: #e94560; }
+.filter-row { display: flex; gap: 4px; padding: 4px 8px; border-bottom: 1px solid #0f3460; }
+.filter-btn { flex: 1; padding: 4px; border: 1px solid #0f3460; border-radius: 3px; background: transparent; color: #888; font-size: 11px; cursor: pointer; text-align: center; }
+.filter-btn.active { background: #0f3460; color: #e0e0e0; border-color: #e94560; }
+.list-status { padding: 6px 10px; font-size: 11px; color: #666; border-bottom: 1px solid #0f3460; }
+.episode-list { flex: 1; overflow-y: auto; }
+.ep-item { padding: 8px 10px; border-bottom: 1px solid #0f3460; cursor: pointer; font-size: 12px; transition: background .1s; }
+.ep-item:hover { background: #1a1a3e; }
+.ep-item.active { background: #0f3460; border-left: 3px solid #e94560; }
+.ep-item.modified { border-left: 3px solid #4caf50; }
+.ep-item .ep-name { font-weight: 600; color: #ccc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ep-item .ep-meta { color: #666; font-size: 11px; margin-top: 2px; }
+.ep-item .ep-meta .tag { display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 10px; margin-right: 4px; }
+.tag-cat { background: #1a3a5c; color: #7fb3e0; }
+.tag-vid { background: #1a3c2a; color: #7fcc8e; }
+.tag-mod { background: #3c3a1a; color: #cccc7f; }
+
+/* Right panel */
+.right-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+.nav-bar { display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: #16213e; border-bottom: 1px solid #0f3460; flex-shrink: 0; flex-wrap: wrap; }
+.nav-bar .ep-title { font-weight: 700; font-size: 14px; color: #e0e0e0; }
+.nav-bar .ep-pos { font-size: 12px; color: #888; }
+
+/* Episode content */
+.episode-content { flex: 1; overflow-y: auto; padding: 16px; }
+
+.segment-card { background: #16213e; border: 1px solid #0f3460; border-radius: 6px; margin-bottom: 16px; overflow: hidden; }
+.segment-card.has-anaphora { border-left: 3px solid #ff9800; }
+.segment-card.modified { border-left: 3px solid #4caf50; }
+
+.seg-header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #0f2040; border-bottom: 1px solid #0f3460; }
+.seg-header .seg-id { font-weight: 700; font-size: 13px; color: #e94560; }
+.seg-header .seg-video { font-size: 12px; color: #888; }
+.seg-header .seg-cat { font-size: 11px; color: #7fb3e0; background: #1a3a5c; padding: 2px 6px; border-radius: 3px; }
+
+.seg-body { padding: 12px; }
+
+.seg-row { display: flex; gap: 12px; margin-bottom: 10px; }
+.seg-video-area { width: 320px; flex-shrink: 0; }
+.seg-video-area video { width: 100%; border-radius: 4px; background: #000; }
+.seg-video-area .no-video { width: 100%; height: 180px; display: flex; align-items: center; justify-content: center; background: #0a0a1a; border-radius: 4px; color: #555; font-size: 13px; }
+.seg-fields { flex: 1; min-width: 0; }
+
+.field-group { margin-bottom: 8px; }
+.field-label { font-size: 11px; color: #888; margin-bottom: 3px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+.field-value { font-size: 13px; color: #ccc; padding: 5px 8px; background: #1a1a2e; border-radius: 3px; border-left: 2px solid #0f3460; }
+
+/* Editable fields */
+.edit-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.edit-row label { font-size: 12px; color: #aaa; font-weight: 600; min-width: 140px; }
+
+.toggle { position: relative; display: inline-block; width: 42px; height: 22px; }
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #333; border-radius: 22px; transition: .2s; }
+.toggle .slider:before { content: ""; position: absolute; height: 16px; width: 16px; left: 3px; bottom: 3px; background: #888; border-radius: 50%; transition: .2s; }
+.toggle input:checked + .slider { background: #e94560; }
+.toggle input:checked + .slider:before { transform: translateX(20px); background: #fff; }
+
+.edit-input { padding: 5px 8px; border: 1px solid #0f3460; border-radius: 4px; background: #1a1a2e; color: #e0e0e0; font-size: 13px; font-family: inherit; }
+.edit-input:focus { outline: none; border-color: #e94560; }
+.edit-input.wide { width: 300px; }
+
+/* Body parts checkbox grid */
+.bp-grid { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.bp-option { display: inline-flex; align-items: center; gap: 3px; padding: 3px 8px; background: #1a1a2e; border: 1px solid #0f3460; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all .15s; user-select: none; }
+.bp-option:hover { border-color: #e94560; }
+.bp-option input { display: none; }
+.bp-option:has(input:checked) { background: #0f3460; border-color: #4caf50; color: #8f8; }
+.bp-option span { pointer-events: none; }
+.custom-bp-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; background: #0f3460; border-radius: 12px; font-size: 12px; color: #e0e0e0; }
+.chip .chip-remove { cursor: pointer; color: #e94560; font-weight: 700; font-size: 14px; line-height: 1; }
+.chip .chip-remove:hover { color: #ff6b7a; }
+
+/* Context info (collapsible) */
+.context-toggle { font-size: 11px; color: #666; cursor: pointer; margin-top: 4px; }
+.context-toggle:hover { color: #aaa; }
+.context-info { display: none; margin-top: 8px; padding: 8px; background: #0f1a2e; border-radius: 4px; }
+.context-info.show { display: block; }
+
+/* Bottom bar */
+.bottom-bar { display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: #16213e; border-top: 1px solid #0f3460; flex-shrink: 0; }
+.bottom-bar .status { font-size: 12px; color: #4caf50; margin-left: auto; }
+
+/* Keyboard hints */
+.hints { font-size: 11px; color: #555; padding: 4px 16px 6px; background: #16213e; }
+.hints kbd { background: #0f3460; padding: 1px 5px; border-radius: 3px; font-size: 10px; color: #aaa; }
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #1a1a2e; }
+::-webkit-scrollbar-thumb { background: #0f3460; border-radius: 3px; }
+
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <span class="title">Anaphora Annotator</span>
+  <span class="info" id="globalInfo">Loading...</span>
+  <span class="spacer"></span>
+  <button class="btn btn-primary" onclick="saveAll()">Save All to File</button>
+</div>
+
+<div class="main">
+  <div class="left-panel">
+    <div class="search-box">
+      <input type="text" id="searchInput" placeholder="Search episode / caption / category..." oninput="debounceSearch()">
+    </div>
+    <div class="filter-row">
+      <div class="filter-btn active" data-filter="all" onclick="setFilter('all')">All</div>
+      <div class="filter-btn" data-filter="modified" onclick="setFilter('modified')">Modified</div>
+      <div class="filter-btn" data-filter="unmodified" onclick="setFilter('unmodified')">Unmodified</div>
+      <div class="filter-btn" data-filter="has_video" onclick="setFilter('has_video')">Has Video</div>
+    </div>
+    <div class="list-status" id="listStatus">-</div>
+    <div class="episode-list" id="episodeList"></div>
+  </div>
+
+  <div class="right-panel">
+    <div class="nav-bar">
+      <button class="btn btn-secondary" id="prevBtn" onclick="loadPrevEpisode()">&larr; Prev</button>
+      <span class="ep-title" id="epTitle">Select an episode</span>
+      <span class="ep-pos" id="epPos"></span>
+      <button class="btn btn-secondary" id="nextBtn" onclick="loadNextEpisode()">Next &rarr;</button>
+      <span style="flex:1"></span>
+      <button class="btn btn-success" onclick="saveEpisode()">Save Episode</button>
+    </div>
+
+    <div class="episode-content" id="episodeContent">
+      <div style="text-align:center; padding: 80px; color:#555">
+        Select an episode from the left panel to begin annotation.
+      </div>
+    </div>
+
+    <div class="bottom-bar">
+      <div class="hints">
+        <kbd>Ctrl+S</kbd> Save all &nbsp;
+        <kbd>Ctrl+Enter</kbd> Save episode &nbsp;
+        <kbd>[</kbd> Prev episode &nbsp;
+        <kbd>]</kbd> Next episode
+      </div>
+      <span class="status" id="bottomStatus"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+const BODY_PARTS = [
+  "head", "neck", "torso", "spine", "pelvis",
+  "left_shoulder", "right_shoulder",
+  "left_arm", "right_arm", "arms",
+  "left_elbow", "right_elbow",
+  "left_wrist", "right_wrist",
+  "left_hand", "right_hand",
+  "left_hip", "right_hip",
+  "left_leg", "right_leg", "legs",
+  "left_knee", "right_knee",
+  "left_ankle", "right_ankle",
+  "left_foot", "right_foot",
+  "upper_body", "lower_body", "full_body",
+];
+
+// Auto-detect base path (works for both / and /annotator/)
+const BASE = window.location.pathname.replace(/\/$/, '');
+let currentEpisodeId = null;
+let currentEpisodeData = null;
+let searchTimer = null;
+let currentFilter = 'all';
+
+async function fetchInfo() {
+  const r = await fetch(`${BASE}/api/info`);
+  const d = await r.json();
+  document.getElementById('globalInfo').textContent =
+    `${d.total_entries} entries | ${d.total_episodes} episodes | ${d.modified_count} modified`;
+}
+
+async function loadEpisodeList() {
+  const q = document.getElementById('searchInput').value;
+  const r = await fetch(`${BASE}/api/episode_list?q=${encodeURIComponent(q)}&filter=${currentFilter}`);
+  const d = await r.json();
+  renderEpisodeList(d.results);
+  document.getElementById('listStatus').textContent = `${d.results.length} episodes`;
+}
+
+function renderEpisodeList(items) {
+  const list = document.getElementById('episodeList');
+  list.innerHTML = items.map(it => {
+    let cls = 'ep-item';
+    if (it.episode_id === currentEpisodeId) cls += ' active';
+    if (it.has_modified) cls += ' modified';
+    let tags = '';
+    if (it.category) tags += `<span class="tag tag-cat">${esc(it.category)}</span>`;
+    if (it.sample_key) tags += `<span class="tag tag-cat">#${esc(it.sample_key)}</span>`;
+    if (it.has_video) tags += `<span class="tag tag-vid">video</span>`;
+    if (it.all_modified) tags += `<span class="tag tag-mod">done</span>`;
+    return `<div class="${cls}" onclick="loadEpisode('${esc(it.episode_id)}')">
+      <div class="ep-name">${esc(it.episode_id)}</div>
+      <div class="ep-meta">${it.num_segments} segments ${tags}</div>
+    </div>`;
+  }).join('');
+}
+
+async function loadEpisode(episodeId) {
+  const r = await fetch(`${BASE}/api/episode/${encodeURIComponent(episodeId)}`);
+  if (!r.ok) return;
+  const d = await r.json();
+  currentEpisodeId = episodeId;
+  currentEpisodeData = d;
+
+  document.getElementById('epTitle').textContent = episodeId;
+  document.getElementById('epPos').textContent = `(${d.episode_index + 1} / ${document.querySelectorAll('.ep-item').length || '?'})`;
+  document.getElementById('prevBtn').disabled = !d.prev_episode;
+  document.getElementById('nextBtn').disabled = !d.next_episode;
+
+  renderEpisode(d);
+
+  // Highlight in list
+  document.querySelectorAll('.ep-item').forEach(el => {
+    el.classList.toggle('active', el.textContent.includes(episodeId));
+  });
+}
+
+function renderEpisode(data) {
+  const container = document.getElementById('episodeContent');
+  container.innerHTML = data.segments.map((seg, si) => {
+    const cardCls = [
+      'segment-card',
+      seg.event_anaphora ? 'has-anaphora' : '',
+      seg.is_modified ? 'modified' : '',
+    ].filter(Boolean).join(' ');
+
+    const depsStr = (seg.depends_on_segment_ids || []).join(', ');
+    const bodyParts = seg.keep_body_parts || [];
+
+    return `
+    <div class="${cardCls}" data-seg-index="${si}">
+      <div class="seg-header">
+        <span class="seg-id">Segment ${seg.target_segment_id}</span>
+        <span class="seg-video">${esc(seg.target_video_name)}</span>
+        ${seg.babel_category ? `<span class="seg-cat">${esc(seg.babel_category)}</span>` : ''}
+        ${seg.is_target_segment ? '<span class="seg-cat">target</span>' : ''}
+        ${seg.segment_length ? `<span class="seg-cat">len ${esc(seg.segment_length)}</span>` : ''}
+        ${seg.is_modified ? '<span style="color:#4caf50;font-size:11px;margin-left:auto">modified</span>' : ''}
+      </div>
+      <div class="seg-body">
+        <div class="seg-row">
+          <div class="seg-video-area">
+            ${seg.has_video
+              ? `<video controls loop muted autoplay src="${BASE}/api/video_by_name/${encodeURIComponent(seg.target_video_name)}"></video>`
+              : `<div class="no-video">No video available</div>`
+            }
+          </div>
+          <div class="seg-fields">
+            <div class="field-group">
+              <div class="field-label">Caption</div>
+              <div class="field-value">${esc(seg.target_caption)}</div>
+            </div>
+            ${seg.flowmdm_caption && seg.flowmdm_caption !== seg.target_caption ? `
+            <div class="field-group">
+              <div class="field-label">FlowMDM Caption</div>
+              <div class="field-value">${esc(seg.flowmdm_caption)}</div>
+            </div>` : ''}
+
+            <div class="edit-row">
+              <label>event_anaphora:</label>
+              <label class="toggle">
+                <input type="checkbox" data-field="event_anaphora" data-si="${si}" ${seg.event_anaphora ? 'checked' : ''}>
+                <span class="slider"></span>
+              </label>
+              <span class="anaphora-label" style="font-size:12px;color:${seg.event_anaphora ? '#ff9800' : '#555'}">${seg.event_anaphora ? 'True' : 'False'}</span>
+            </div>
+
+            <div class="edit-row">
+              <label>depends_on_segment_ids:</label>
+              <input type="text" class="edit-input wide" data-field="depends_on" data-si="${si}"
+                     value="${depsStr}" placeholder="e.g. 1, 2, 3">
+            </div>
+
+            <div class="field-group" style="margin-top:4px">
+              <div class="field-label">keep_body_parts</div>
+              <div class="bp-grid" data-si="${si}">
+                ${BODY_PARTS.map(bp => `<label class="bp-option"><input type="checkbox" value="${bp}" ${bodyParts.includes(bp) ? 'checked' : ''}><span>${bp}</span></label>`).join('')}
+              </div>
+              <div style="display:flex;gap:6px;margin-top:4px;align-items:center">
+                <input type="text" class="edit-input" data-field="custom_bp" data-si="${si}" placeholder="Custom part..." style="width:160px" onkeydown="if(event.key==='Enter'){event.preventDefault();addCustomBodyPart(${si})}">
+                <button class="btn btn-sm btn-secondary" onclick="addCustomBodyPart(${si})">Add</button>
+                <div class="custom-bp-chips" data-si="${si}">
+                  ${bodyParts.filter(bp => !BODY_PARTS.includes(bp)).map(bp => `<span class="chip">${esc(bp)}<span class="chip-remove" onclick="removeCustomBodyPart(${si},'${esc(bp)}')">&times;</span></span>`).join('')}
+                </div>
+              </div>
+            </div>
+
+            <div class="context-toggle" onclick="toggleContext(${si})">Show context details...</div>
+            <div class="context-info" id="context-${si}">
+              <div class="field-group"><div class="field-label">Sample</div><div class="field-value">#${esc(seg.sample_key || '')} ${esc(seg.source_id || '')}</div></div>
+              <div class="field-group"><div class="field-label">Scenario</div><div class="field-value">${esc(seg.scenario || '-')}</div></div>
+              <div class="field-group"><div class="field-label">Anaphoric expression</div><div class="field-value">${esc(seg.anaphoric_expression_in_target || '-')}</div></div>
+              <div class="field-group"><div class="field-label">Antecedent expression</div><div class="field-value">${esc(seg.antecedent_expression || '-')}</div></div>
+              <div class="field-group"><div class="field-label">Dependency type</div><div class="field-value">${esc(seg.dependency_type || '-')}</div></div>
+              <div class="field-group"><div class="field-label">Reason</div><div class="field-value">${esc(seg.reason || '-')}</div></div>
+              <div class="field-group"><div class="field-label">Kwargs</div><div class="field-value">${esc(seg.kwargs_path || '-')}</div></div>
+              <div class="field-group"><div class="field-label">Render Video</div><div class="field-value">${esc(seg.render_video_path || '-')}</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // Bind toggle events
+  container.querySelectorAll('input[data-field="event_anaphora"]').forEach(el => {
+    el.addEventListener('change', function() {
+      const label = this.closest('.edit-row').querySelector('.anaphora-label');
+      label.textContent = this.checked ? 'True' : 'False';
+      label.style.color = this.checked ? '#ff9800' : '#555';
+    });
+  });
+}
+
+function toggleContext(si) {
+  const el = document.getElementById(`context-${si}`);
+  el.classList.toggle('show');
+}
+
+// Body parts
+function getBodyPartsForSeg(si) {
+  const parts = [];
+  // Checked checkboxes
+  const grid = document.querySelector(`.bp-grid[data-si="${si}"]`);
+  grid.querySelectorAll('input:checked').forEach(cb => parts.push(cb.value));
+  // Custom chips
+  const chips = document.querySelector(`.custom-bp-chips[data-si="${si}"]`);
+  chips.querySelectorAll('.chip').forEach(c => {
+    const v = c.textContent.replace('\u00d7', '').trim();
+    if (v && !parts.includes(v)) parts.push(v);
+  });
+  return parts;
+}
+
+function addCustomBodyPart(si) {
+  const input = document.querySelector(`input[data-field="custom_bp"][data-si="${si}"]`);
+  const part = input.value.trim().toLowerCase();
+  if (!part) return;
+  const existing = getBodyPartsForSeg(si);
+  if (existing.includes(part)) { input.value = ''; return; }
+  // If it's a predefined part, just check the checkbox
+  const grid = document.querySelector(`.bp-grid[data-si="${si}"]`);
+  const cb = grid.querySelector(`input[value="${part}"]`);
+  if (cb) { cb.checked = true; input.value = ''; return; }
+  // Otherwise add as custom chip
+  const chips = document.querySelector(`.custom-bp-chips[data-si="${si}"]`);
+  const chip = document.createElement('span');
+  chip.className = 'chip';
+  chip.innerHTML = `${esc(part)}<span class="chip-remove" onclick="removeCustomBodyPart(${si},'${esc(part)}')">&times;</span>`;
+  chips.appendChild(chip);
+  input.value = '';
+}
+
+function removeCustomBodyPart(si, part) {
+  const chips = document.querySelector(`.custom-bp-chips[data-si="${si}"]`);
+  chips.querySelectorAll('.chip').forEach(c => {
+    if (c.textContent.replace('\u00d7', '').trim() === part) c.remove();
+  });
+}
+
+// Collect current form state
+function collectSegmentData() {
+  if (!currentEpisodeData) return [];
+  return currentEpisodeData.segments.map((seg, si) => {
+    const card = document.querySelector(`.segment-card[data-seg-index="${si}"]`);
+    const anaphora = card.querySelector('input[data-field="event_anaphora"]').checked;
+    const depsRaw = card.querySelector('input[data-field="depends_on"]').value;
+    const deps = depsRaw.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+    const bodyParts = getBodyPartsForSeg(si);
+    return {
+      index: seg.index,
+      event_anaphora: anaphora,
+      depends_on_segment_ids: deps,
+      keep_body_parts: bodyParts,
+    };
+  });
+}
+
+async function saveEpisode() {
+  const segments = collectSegmentData();
+  const r = await fetch(`${BASE}/api/update_episode`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({segments}),
+  });
+  const d = await r.json();
+  if (d.ok) {
+    showStatus(`Episode saved (${d.updated} segments)`);
+    fetchInfo();
+    loadEpisodeList();
+    // Reload to show modified state
+    loadEpisode(currentEpisodeId);
+  }
+}
+
+async function saveAll() {
+  const r = await fetch(`${BASE}/api/save`, {method: 'POST'});
+  const d = await r.json();
+  if (d.ok) {
+    showStatus(`Saved to file! (${d.modified_count} modified entries)`);
+    fetchInfo();
+  }
+}
+
+function loadPrevEpisode() {
+  if (currentEpisodeData && currentEpisodeData.prev_episode) {
+    loadEpisode(currentEpisodeData.prev_episode);
+  }
+}
+function loadNextEpisode() {
+  if (currentEpisodeData && currentEpisodeData.next_episode) {
+    loadEpisode(currentEpisodeData.next_episode);
+  }
+}
+
+function debounceSearch() {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(loadEpisodeList, 300);
+}
+
+function setFilter(f) {
+  currentFilter = f;
+  document.querySelectorAll('.filter-btn').forEach(el => {
+    el.classList.toggle('active', el.dataset.filter === f);
+  });
+  loadEpisodeList();
+}
+
+function showStatus(msg) {
+  const el = document.getElementById('bottomStatus');
+  el.textContent = msg;
+  setTimeout(() => { el.textContent = ''; }, 3000);
+}
+
+function esc(s) {
+  if (!s) return '';
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+  const tag = e.target.tagName;
+  const inInput = tag === 'INPUT' || tag === 'TEXTAREA';
+
+  if (e.ctrlKey && e.key === 'Enter') { e.preventDefault(); saveEpisode(); return; }
+  if (e.ctrlKey && e.key === 's') { e.preventDefault(); saveAll(); return; }
+  if (inInput) return;
+  if (e.key === '[') loadPrevEpisode();
+  if (e.key === ']') loadNextEpisode();
+});
+
+// Init
+fetchInfo();
+loadEpisodeList();
+</script>
+</body>
+</html>
