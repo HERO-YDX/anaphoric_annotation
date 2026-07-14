@@ -178,6 +178,15 @@ class AnnotationApiTests(unittest.TestCase):
         self.assertIn(b'data-field="target_caption"', response.data)
         self.assertIn(b'id="prevPageBtn"', response.data)
         self.assertIn(b'id="nextPageBtn"', response.data)
+        workflow_markers = [
+            response.data.index(f'data-workflow-step="{step}"'.encode())
+            for step in range(1, 5)
+        ]
+        self.assertEqual(workflow_markers, sorted(workflow_markers))
+        self.assertNotIn(b'data-field="depends_on"', response.data)
+        self.assertIn(b"Maintained state", response.data)
+        self.assertIn(b"Body parts to maintain", response.data)
+        self.assertIn(b"Caption check", response.data)
 
     def test_episode_list_returns_100_items_per_page(self):
         self.configure_episode_count(250)
@@ -313,6 +322,46 @@ class AnnotationApiTests(unittest.TestCase):
 
         info = self.client.get("/api/info").get_json()
         self.assertEqual(info["action_switch_annotated_count"], 2)
+
+    def test_episode_update_preserves_hidden_dependency_ids(self):
+        annotation_app.DATA["entries"][0]["depends_on_segment_ids"] = [7, 8]
+        annotation_app.DATA["entries"][1]["depends_on_segment_ids"] = [9]
+
+        response = self.client.post(
+            "/api/update_episode",
+            json={
+                "segments": [
+                    {
+                        "index": 0,
+                        "target_caption": "first action",
+                        "event_anaphora": True,
+                        "depends_on_segment_ids": [999],
+                        "keep_body_parts": ["left_hand"],
+                        "action_switch_times": [1.25],
+                        "no_action_switch": False,
+                    },
+                    {
+                        "index": 1,
+                        "target_caption": "second action",
+                        "event_anaphora": False,
+                        "depends_on_segment_ids": [999],
+                        "keep_body_parts": [],
+                        "action_switch_times": [],
+                        "no_action_switch": True,
+                    },
+                ]
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            annotation_app.DATA["modified"][0]["depends_on_segment_ids"],
+            [7, 8],
+        )
+        self.assertEqual(
+            annotation_app.DATA["modified"][1]["depends_on_segment_ids"],
+            [9],
+        )
 
     def test_episode_update_is_atomic_when_caption_is_invalid(self):
         response = self.client.post(

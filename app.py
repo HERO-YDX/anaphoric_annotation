@@ -486,8 +486,7 @@ def api_update():
     modified_entry = dict(base)
     if "event_anaphora" in data:
         modified_entry["event_anaphora"] = bool(data["event_anaphora"])
-    if "depends_on_segment_ids" in data:
-        modified_entry["depends_on_segment_ids"] = data["depends_on_segment_ids"]
+    # depends_on_segment_ids editing is intentionally disabled; preserve base value.
     if "keep_body_parts" in data:
         modified_entry["keep_body_parts"] = data["keep_body_parts"]
     try:
@@ -526,8 +525,7 @@ def api_update_episode():
         modified_entry = dict(base)
         if "event_anaphora" in seg:
             modified_entry["event_anaphora"] = bool(seg["event_anaphora"])
-        if "depends_on_segment_ids" in seg:
-            modified_entry["depends_on_segment_ids"] = seg["depends_on_segment_ids"]
+        # depends_on_segment_ids editing is intentionally disabled; preserve base value.
         if "keep_body_parts" in seg:
             modified_entry["keep_body_parts"] = seg["keep_body_parts"]
         try:

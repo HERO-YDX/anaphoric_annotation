@@ -105,6 +105,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .edit-input.wide { width: 300px; }
 .caption-input { width: 100%; min-height: 58px; box-sizing: border-box; resize: vertical; line-height: 1.4; }
 
+/* Four-step annotation workflow */
+.workflow-step { margin: 0 0 10px; padding: 10px; border: 1px solid #0f3460; border-radius: 5px; background: #141d38; }
+.workflow-title { display: flex; align-items: center; gap: 7px; color: #eee; font-size: 13px; font-weight: 700; }
+.workflow-help { margin: 4px 0 9px; color: #8f8f9f; font-size: 11px; line-height: 1.45; }
+.step-number { display: inline-flex; align-items: center; justify-content: center; min-width: 21px; height: 21px; padding: 0 6px; border-radius: 11px; background: #e94560; color: #fff; font-size: 11px; font-weight: 700; }
+.workflow-step .edit-row:last-child, .workflow-step .field-group:last-child { margin-bottom: 0; }
+
 /* Required action-switch annotation */
 .switch-editor { margin: 10px 0 12px; padding: 10px; border: 1px solid #7a3434; border-radius: 5px; background: #21192a; }
 .switch-editor.complete { border-color: #2e7d58; background: #142822; }
@@ -350,7 +357,7 @@ function renderEpisode(data) {
       seg.is_modified ? 'modified' : '',
     ].filter(Boolean).join(' ');
 
-    const depsStr = (seg.depends_on_segment_ids || []).join(', ');
+    // depends_on_segment_ids editing is intentionally disabled in this workflow.
     const bodyParts = seg.keep_body_parts || [];
     const switchTimes = normalizeActionSwitchTimes(seg.action_switch_times || []);
     const noActionSwitch = Boolean(seg.no_action_switch);
@@ -376,22 +383,58 @@ function renderEpisode(data) {
             }
           </div>
           <div class="seg-fields">
-            <div class="field-group">
-              <div class="field-label">Caption</div>
-              <textarea class="edit-input caption-input" data-field="target_caption" data-si="${si}" rows="2" placeholder="Enter caption">${esc(seg.target_caption)}</textarea>
+            <div class="workflow-step" data-workflow-step="1">
+              <div class="workflow-title"><span class="step-number">1</span> Maintained state</div>
+              <div class="workflow-help">Does this segment contain a state that must continue while another action happens (for example, walking while holding an object)? If yes, enable event_anaphora.</div>
+              <div class="edit-row">
+                <label>event_anaphora:</label>
+                <label class="toggle">
+                  <input type="checkbox" data-field="event_anaphora" data-si="${si}" ${seg.event_anaphora ? 'checked' : ''}>
+                  <span class="slider"></span>
+                </label>
+                <span class="anaphora-label" style="font-size:12px;color:${seg.event_anaphora ? '#ff9800' : '#555'}">${seg.event_anaphora ? 'True' : 'False'}</span>
+              </div>
             </div>
-            ${seg.flowmdm_caption && seg.flowmdm_caption !== seg.target_caption ? `
-            <div class="field-group">
-              <div class="field-label">FlowMDM Caption</div>
-              <div class="field-value">${esc(seg.flowmdm_caption)}</div>
-            </div>` : ''}
 
-            <div class="switch-editor ${switchComplete ? 'complete' : 'incomplete'}" data-switch-editor data-si="${si}" data-has-video="${seg.has_video ? 'true' : 'false'}">
+            <div class="workflow-step" data-workflow-step="2">
+              <div class="workflow-title"><span class="step-number">2</span> Body parts to maintain</div>
+              <div class="workflow-help">Select the body parts involved in the maintained action (for example, running → left_leg and right_leg; holding an object in the left hand → left_hand).</div>
+              <div class="field-group">
+                <div class="field-label">keep_body_parts</div>
+                <div class="bp-grid" data-si="${si}">
+                  ${BODY_PARTS.map(bp => `<label class="bp-option"><input type="checkbox" value="${bp}" ${bodyParts.includes(bp) ? 'checked' : ''}><span>${bp}</span></label>`).join('')}
+                </div>
+                <div style="display:flex;gap:6px;margin-top:4px;align-items:center">
+                  <input type="text" class="edit-input" data-field="custom_bp" data-si="${si}" placeholder="Custom part..." style="width:160px" onkeydown="if(event.key==='Enter'){event.preventDefault();addCustomBodyPart(${si})}">
+                  <button class="btn btn-sm btn-secondary" onclick="addCustomBodyPart(${si})">Add</button>
+                  <div class="custom-bp-chips" data-si="${si}">
+                    ${bodyParts.filter(bp => !BODY_PARTS.includes(bp)).map(bp => `<span class="chip">${esc(bp)}<span class="chip-remove" onclick="removeCustomBodyPart(${si},'${esc(bp)}')">&times;</span></span>`).join('')}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="workflow-step" data-workflow-step="3">
+              <div class="workflow-title"><span class="step-number">3</span> Caption check</div>
+              <div class="workflow-help">Check that the caption explicitly describes the maintained state (for example, “... while running”). Edit the caption when that information is missing.</div>
+              <div class="field-group">
+                <div class="field-label">Caption</div>
+                <textarea class="edit-input caption-input" data-field="target_caption" data-si="${si}" rows="2" placeholder="Enter caption">${esc(seg.target_caption)}</textarea>
+              </div>
+              ${seg.flowmdm_caption && seg.flowmdm_caption !== seg.target_caption ? `
+              <div class="field-group">
+                <div class="field-label">Reference Caption</div>
+                <div class="field-value">${esc(seg.flowmdm_caption)}</div>
+              </div>` : ''}
+            </div>
+
+            <div class="workflow-step switch-editor ${switchComplete ? 'complete' : 'incomplete'}" data-workflow-step="4" data-switch-editor data-si="${si}" data-has-video="${seg.has_video ? 'true' : 'false'}">
               <div class="switch-title">
+                <span class="step-number">4</span>
                 Action switch times
                 <span class="required-badge">required</span>
               </div>
-              <div class="switch-help">Play the video to an action boundary and mark the current position. Times are stored as seconds from the start of the video.</div>
+              <div class="switch-help">Check whether the segment changes from one action to another (for example, jump → run). If it does, play to the boundary and select Mark current time.</div>
               <div class="switch-controls">
                 <button type="button" class="btn btn-sm btn-primary" data-action="mark-current" onclick="markCurrentTime(${si})" ${(!seg.has_video || noActionSwitch) ? 'disabled' : ''}>Mark current time</button>
                 <span class="video-clock" data-role="video-clock">0.000s</span>
@@ -410,35 +453,6 @@ function renderEpisode(data) {
                     : '<span class="switch-empty">No switch time marked yet</span>')}
               </div>
               <div class="switch-validation" data-role="switch-validation">${switchComplete ? 'Action-switch annotation complete.' : 'Mark at least one time, or explicitly select no action switch.'}</div>
-            </div>
-
-            <div class="edit-row">
-              <label>event_anaphora:</label>
-              <label class="toggle">
-                <input type="checkbox" data-field="event_anaphora" data-si="${si}" ${seg.event_anaphora ? 'checked' : ''}>
-                <span class="slider"></span>
-              </label>
-              <span class="anaphora-label" style="font-size:12px;color:${seg.event_anaphora ? '#ff9800' : '#555'}">${seg.event_anaphora ? 'True' : 'False'}</span>
-            </div>
-
-            <div class="edit-row">
-              <label>depends_on_segment_ids:</label>
-              <input type="text" class="edit-input wide" data-field="depends_on" data-si="${si}"
-                     value="${depsStr}" placeholder="e.g. 1, 2, 3">
-            </div>
-
-            <div class="field-group" style="margin-top:4px">
-              <div class="field-label">keep_body_parts</div>
-              <div class="bp-grid" data-si="${si}">
-                ${BODY_PARTS.map(bp => `<label class="bp-option"><input type="checkbox" value="${bp}" ${bodyParts.includes(bp) ? 'checked' : ''}><span>${bp}</span></label>`).join('')}
-              </div>
-              <div style="display:flex;gap:6px;margin-top:4px;align-items:center">
-                <input type="text" class="edit-input" data-field="custom_bp" data-si="${si}" placeholder="Custom part..." style="width:160px" onkeydown="if(event.key==='Enter'){event.preventDefault();addCustomBodyPart(${si})}">
-                <button class="btn btn-sm btn-secondary" onclick="addCustomBodyPart(${si})">Add</button>
-                <div class="custom-bp-chips" data-si="${si}">
-                  ${bodyParts.filter(bp => !BODY_PARTS.includes(bp)).map(bp => `<span class="chip">${esc(bp)}<span class="chip-remove" onclick="removeCustomBodyPart(${si},'${esc(bp)}')">&times;</span></span>`).join('')}
-                </div>
-              </div>
             </div>
 
             <div class="context-toggle" onclick="toggleContext(${si})">Show context details...</div>
@@ -666,8 +680,7 @@ function collectSegmentData() {
     const captionInput = card.querySelector('textarea[data-field="target_caption"]');
     const targetCaption = captionInput.value.trim();
     const anaphora = card.querySelector('input[data-field="event_anaphora"]').checked;
-    const depsRaw = card.querySelector('input[data-field="depends_on"]').value;
-    const deps = depsRaw.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+    // depends_on_segment_ids is intentionally not submitted; existing values are preserved.
     const bodyParts = getBodyPartsForSeg(si);
     const actionSwitchTimes = getActionSwitchTimesForSeg(si);
     const noActionSwitch = card.querySelector('input[data-field="no_action_switch"]').checked;
@@ -691,7 +704,6 @@ function collectSegmentData() {
       index: seg.index,
       target_caption: targetCaption,
       event_anaphora: anaphora,
-      depends_on_segment_ids: deps,
       keep_body_parts: bodyParts,
       action_switch_times: actionSwitchTimes,
       no_action_switch: noActionSwitch,

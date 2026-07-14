@@ -8,8 +8,7 @@ their videos and correcting event-anaphora annotations.
 - Browse all episodes in a paginated sidebar with 100 episodes per page.
 - Search and filter episodes and captions across the full dataset.
 - Play the video associated with each motion segment.
-- Edit and save `target_caption`, `event_anaphora`,
-  `depends_on_segment_ids`, and `keep_body_parts`.
+- Edit and save `target_caption`, `event_anaphora`, and `keep_body_parts`.
 - Mark one or more action-switch times directly from the video player.
 - Require an explicit `no_action_switch` decision when a video has no switch.
 - Save annotations as JSONL and resume from an existing output file.
@@ -67,6 +66,21 @@ Each JSONL record should normally contain:
 
 `target_caption` is editable and must remain non-empty. The other editable
 annotation fields may already be present or will use empty defaults.
+
+### Annotation workflow
+
+For each segment:
+
+1. Decide whether the action contains a state that must be maintained while
+   another action happens. If so, enable `event_anaphora`.
+2. Select the maintained state's body parts in `keep_body_parts`.
+3. Check that `target_caption` explicitly describes the maintained state and
+   edit it when needed.
+4. Check for an action transition and mark its video time, or explicitly select
+   `no_action_switch` when no transition occurs.
+
+`depends_on_segment_ids` is intentionally hidden and is not submitted by the
+current UI. Existing values in loaded records are preserved during saves.
 
 Every saved segment must also complete the action-switch annotation using one
 of these mutually exclusive forms:
