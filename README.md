@@ -63,8 +63,10 @@ http://127.0.0.1:8888/?range_start=201&range_end=300
 ```
 
 The sidebar, search, filters, pagination, and episode Previous/Next navigation
-stay inside the selected range. **Save All to File** still exports the complete
-JSONL in original order, including modifications made within the assignment.
+stay inside the selected range. **Save Assigned Range** exports only the
+episodes in that inclusive range, in their original entry order. The range is
+also included in the filename, such as `_episodes_201-300.jsonl`, so different
+assignments do not overwrite each other.
 
 ### Custom flat JSONL and video directory
 
@@ -130,24 +132,26 @@ By default, annotations are written outside `meta/` to a repository-relative,
 versioned path:
 
 ```text
-annotation_output/<input_stem>_annotated_YYYYMMDDTHHMMSS_microseconds.jsonl
+annotation_output/<input_stem>_annotated_YYYYMMDDTHHMMSS_microseconds_episodes_START-END.jsonl
 ```
 
 The timestamp is created when the server starts, so a new annotation session
-does not overwrite an earlier export. Repeated saves in the same session safely
-update that session's file. Use `--output` to choose an exact destination:
+does not overwrite an earlier export. Repeated saves of the same range in one
+session safely update that range's file. Use `--output` to choose the base
+destination; the range suffix is still added:
 
 ```bash
 python app.py input.jsonl videos --output annotations.jsonl
 ```
 
-At startup, the newest timestamped output with the same input stem is loaded
-automatically when it has the same number of entries. For compatibility, the
-old `<input_stem>_annotated.jsonl` beside the input is used when no versioned
+At startup, the newest compatible full snapshot is loaded first, followed by
+newer range snapshots in chronological order. This restores work saved by
+different assignments. For compatibility, the old
+`<input_stem>_annotated.jsonl` beside the input is used when no versioned full
 output exists. Records marked with `"annotated": true` are restored so
 annotation can continue from the previous session. Exports are written
-atomically: the previous complete file remains intact if serialization or disk
-writing fails.
+atomically: the previous complete range file remains intact if serialization
+or disk writing fails.
 
 ## Tests
 

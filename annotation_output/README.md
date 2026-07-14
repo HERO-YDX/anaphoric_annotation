@@ -1,14 +1,15 @@
 # Annotation output directory
 
-Default exports are written here with a timestamped name:
+Default exports are written here with a session timestamp and inclusive episode
+positions in the filename:
 
 ```text
-<input_stem>_annotated_YYYYMMDDTHHMMSS_microseconds.jsonl
+<input_stem>_annotated_YYYYMMDDTHHMMSS_microseconds_episodes_201-300.jsonl
 ```
 
-Each server session gets a new filename. Repeated **Save All to File** actions
-within that session atomically update the same file. When the application is
-started again, it restores annotations from the newest compatible timestamped
-file and writes subsequent saves to a new version.
+Repeated saves of the same range within a session atomically update that range
+file. Different assignment ranges therefore remain separate. On the next
+startup, compatible range files newer than the latest full snapshot are replayed
+in chronological order to restore saved progress.
 
 Generated JSONL files are ignored by Git; only this README is tracked.

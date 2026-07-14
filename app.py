@@ -62,22 +62,69 @@ def timestamped_output_path(input_path, output_root=DEFAULT_OUTPUT_ROOT, now=Non
     timestamp = (now or datetime.now()).strftime("%Y%m%dT%H%M%S_%f")
     prefix = f"{Path(input_path).stem}_annotated_{timestamp}"
     candidate = output_root / f"{prefix}.jsonl"
+
+    def path_version_exists(path):
+        if path.exists() or not output_root.is_dir():
+            return path.exists()
+        range_prefix = f"{path.stem}_episodes_"
+        return any(
+            existing.is_file()
+            and existing.name.startswith(range_prefix)
+            and existing.suffix == ".jsonl"
+            for existing in output_root.iterdir()
+        )
+
     sequence = 1
-    while candidate.exists():
+    while path_version_exists(candidate):
         sequence += 1
         candidate = output_root / f"{prefix}_{sequence:03d}.jsonl"
     return candidate
 
 
+def timestamped_output_version(path, input_path):
+    """Parse the sortable timestamp and collision sequence of a full output."""
+    stem = re.escape(Path(input_path).stem)
+    pattern = re.compile(
+        rf"^{stem}_annotated_(\d{{8}}T\d{{6}}_\d{{6}})(?:_(\d{{3}}))?\.jsonl$"
+    )
+    match = pattern.match(Path(path).name)
+    if not match:
+        return None
+    try:
+        timestamp = datetime.strptime(match.group(1), "%Y%m%dT%H%M%S_%f")
+    except ValueError:
+        return None
+    return timestamp, int(match.group(2) or 1)
+
+
 def latest_timestamped_output(input_path, output_root=DEFAULT_OUTPUT_ROOT):
-    """Find the newest valid timestamped output for an input file."""
+    """Find the newest valid full timestamped output for an input file."""
     output_root = Path(output_root)
     if not output_root.is_dir():
         return None
 
+    candidates = []
+    for path in output_root.iterdir():
+        if not path.is_file():
+            continue
+        version = timestamped_output_version(path, input_path)
+        if version is None:
+            continue
+        candidates.append((*version, path))
+
+    return max(candidates, default=(None, None, None))[-1]
+
+
+def timestamped_range_outputs(input_path, output_root=DEFAULT_OUTPUT_ROOT):
+    """Return timestamped range outputs in chronological order."""
+    output_root = Path(output_root)
+    if not output_root.is_dir():
+        return []
+
     stem = re.escape(Path(input_path).stem)
     pattern = re.compile(
-        rf"^{stem}_annotated_(\d{{8}}T\d{{6}}_\d{{6}})(?:_(\d{{3}}))?\.jsonl$"
+        rf"^{stem}_annotated_(\d{{8}}T\d{{6}}_\d{{6}})"
+        rf"(?:_(\d{{3}}))?_episodes_(\d+)-(\d+)\.jsonl$"
     )
     candidates = []
     for path in output_root.iterdir():
@@ -90,15 +137,34 @@ def latest_timestamped_output(input_path, output_root=DEFAULT_OUTPUT_ROOT):
             timestamp = datetime.strptime(match.group(1), "%Y%m%dT%H%M%S_%f")
         except ValueError:
             continue
-        candidates.append((timestamp, int(match.group(2) or 1), path))
+        candidates.append({
+            "path": path,
+            "range_start": int(match.group(3)),
+            "range_end": int(match.group(4)),
+            "version": (timestamp, int(match.group(2) or 1)),
+        })
 
-    return max(candidates, default=(None, None, None))[-1]
+    return sorted(
+        candidates,
+        key=lambda candidate: (*candidate["version"], candidate["path"].name),
+    )
 
 
 def legacy_output_path(input_path):
     """Return the pre-versioning output location used by older releases."""
     input_path = Path(input_path)
     return input_path.with_name(f"{input_path.stem}_annotated.jsonl")
+
+
+def range_output_path(output_path, range_start, range_end, total_episodes):
+    """Add a zero-padded inclusive episode range to an output filename."""
+    output_path = Path(output_path)
+    width = max(3, len(str(total_episodes)))
+    suffix = output_path.suffix or ".jsonl"
+    stem = output_path.stem if output_path.suffix else output_path.name
+    return output_path.with_name(
+        f"{stem}_episodes_{range_start:0{width}d}-{range_end:0{width}d}{suffix}"
+    )
 
 
 def write_jsonl_atomic(path, entries):
@@ -223,6 +289,41 @@ def parse_episode_range(args, total_episodes):
             f"1 <= range_start <= range_end <= {total_episodes}"
         )
     return range_start, range_end
+
+
+def episode_range_entry_indices(episodes, episode_ids, range_start, range_end):
+    """Return original entry indices for an inclusive episode range."""
+    return sorted(
+        index
+        for episode_id in episode_ids[range_start - 1:range_end]
+        for index in episodes[episode_id]
+    )
+
+
+def restore_output_entries(original_entries, modified_entries, output_entries, indices):
+    """Restore one full or partial output after validating record alignment."""
+    if len(output_entries) != len(indices):
+        return False
+
+    def identity(entry):
+        return (
+            entry.get("episode_id"),
+            entry.get("target_segment_id"),
+            entry.get("target_video_name"),
+        )
+
+    if any(
+        identity(original_entries[index]) != identity(output_entry)
+        for index, output_entry in zip(indices, output_entries)
+    ):
+        return False
+
+    for index, output_entry in zip(indices, output_entries):
+        if output_entry.get("annotated"):
+            modified_entries[index] = output_entry
+        else:
+            modified_entries.pop(index, None)
+    return True
 
 
 def resolve_video_path(video_name):
@@ -617,14 +718,29 @@ def api_delete_annotation():
 
 @app.route("/api/save", methods=["POST"])
 def api_save():
-    output_path = DATA["output_path"]
+    data = request.get_json(silent=True) or {}
+    total_episodes = len(DATA["episode_ids"])
+    try:
+        range_start, range_end = parse_episode_range(data, total_episodes)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+    range_episode_ids = DATA["episode_ids"][range_start - 1:range_end]
+    range_indices = episode_range_entry_indices(
+        DATA["episodes"], DATA["episode_ids"], range_start, range_end
+    )
     output_entries = [
-        DATA["modified"].get(i, entry)
-        for i, entry in enumerate(DATA["entries"])
+        DATA["modified"].get(index, DATA["entries"][index])
+        for index in range_indices
     ]
-    modified_count = len(DATA["modified"])
+    modified_count = sum(index in DATA["modified"] for index in range_indices)
     action_switch_annotated_count = sum(
         is_action_switch_annotated(entry) for entry in output_entries
+    )
+    output_path = str(
+        range_output_path(
+            DATA["output_path"], range_start, range_end, total_episodes
+        )
     )
     try:
         write_jsonl_atomic(output_path, output_entries)
@@ -635,9 +751,14 @@ def api_save():
         "ok": True,
         "saved_to": output_path,
         "modified_count": modified_count,
+        "total_episodes": len(range_episode_ids),
         "total_entries": len(output_entries),
         "action_switch_annotated_count": action_switch_annotated_count,
         "complete": action_switch_annotated_count == len(output_entries),
+        "episode_range": {
+            "start": range_start,
+            "end": range_end,
+        },
     })
 
 
@@ -695,6 +816,8 @@ def main():
     print(f"Available videos: {len(DATA['available_videos'])}")
 
     resume_path = None
+    resume_version = None
+    range_resume_candidates = []
     if args.output:
         DATA["output_path"] = os.path.abspath(args.output)
         if os.path.exists(DATA["output_path"]):
@@ -702,10 +825,21 @@ def main():
     else:
         DEFAULT_OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
         resume_path = latest_timestamped_output(DATA["jsonl_path"])
+        if resume_path is not None:
+            resume_version = timestamped_output_version(
+                resume_path, DATA["jsonl_path"]
+            )
         if resume_path is None:
             legacy_path = legacy_output_path(DATA["jsonl_path"])
             if legacy_path.exists():
                 resume_path = legacy_path
+        range_resume_candidates = timestamped_range_outputs(DATA["jsonl_path"])
+        if resume_version is not None:
+            range_resume_candidates = [
+                candidate
+                for candidate in range_resume_candidates
+                if candidate["version"] >= resume_version
+            ]
         DATA["output_path"] = str(
             timestamped_output_path(DATA["jsonl_path"])
         )
@@ -720,19 +854,47 @@ def main():
     else:
         DATA["entries"] = load_jsonl(DATA["jsonl_path"])
 
-    # Resume from existing output
+    # Build episode index before restoring full and partial range outputs.
+    DATA["episodes"] = build_episode_index(DATA["entries"])
+    DATA["episode_ids"] = list(DATA["episodes"].keys())
+    DATA["modified"] = {}
+
+    # Resume from the latest full snapshot, then newer range snapshots.
     if resume_path is not None:
         print(f"Resuming from: {resume_path}")
         output_entries = load_jsonl(resume_path)
-        if len(output_entries) == len(DATA["entries"]):
-            for i, (orig, out) in enumerate(zip(DATA["entries"], output_entries)):
-                if out.get("annotated"):
-                    DATA["modified"][i] = out
-            print(f"Resumed {len(DATA['modified'])} modified entries")
+        if not restore_output_entries(
+            DATA["entries"],
+            DATA["modified"],
+            output_entries,
+            list(range(len(DATA["entries"]))),
+        ):
+            print(f"Skipped incompatible output: {resume_path}")
 
-    # Build episode index
-    DATA["episodes"] = build_episode_index(DATA["entries"])
-    DATA["episode_ids"] = list(DATA["episodes"].keys())
+    for candidate in range_resume_candidates:
+        range_start = candidate["range_start"]
+        range_end = candidate["range_end"]
+        try:
+            parse_episode_range(
+                {"range_start": range_start, "range_end": range_end},
+                len(DATA["episode_ids"]),
+            )
+        except ValueError:
+            print(f"Skipped invalid range output: {candidate['path']}")
+            continue
+        indices = episode_range_entry_indices(
+            DATA["episodes"], DATA["episode_ids"], range_start, range_end
+        )
+        output_entries = load_jsonl(candidate["path"])
+        if restore_output_entries(
+            DATA["entries"], DATA["modified"], output_entries, indices
+        ):
+            print(f"Resuming range {range_start}-{range_end}: {candidate['path']}")
+        else:
+            print(f"Skipped incompatible range output: {candidate['path']}")
+
+    if resume_path is not None or range_resume_candidates:
+        print(f"Resumed {len(DATA['modified'])} modified entries")
 
     print(f"Loaded {len(DATA['entries'])} entries, {len(DATA['episode_ids'])} episodes")
     print(f"Output: {DATA['output_path']}")

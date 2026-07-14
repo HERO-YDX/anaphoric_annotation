@@ -177,7 +177,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   <span class="title">Anaphora &amp; Action Switch Annotator</span>
   <span class="info" id="globalInfo">Loading...</span>
   <span class="spacer"></span>
-  <button class="btn btn-primary" onclick="saveAll()">Save All to File</button>
+  <button class="btn btn-primary" onclick="saveAll()">Save Assigned Range</button>
 </div>
 
 <div class="main">
@@ -230,7 +230,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 
     <div class="bottom-bar">
       <div class="hints">
-        <kbd>Ctrl+S</kbd> Save all &nbsp;
+        <kbd>Ctrl+S</kbd> Save assigned range &nbsp;
         <kbd>Ctrl+Enter</kbd> Save episode &nbsp;
         <kbd>[</kbd> Prev episode &nbsp;
         <kbd>]</kbd> Next episode
@@ -860,11 +860,21 @@ async function saveEpisode() {
 
 async function saveAll() {
   try {
-    const r = await fetch(`${BASE}/api/save`, {method: 'POST'});
+    const r = await fetch(`${BASE}/api/save`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        range_start: episodeRangeStart,
+        range_end: episodeRangeEnd,
+      }),
+    });
     const d = await r.json();
     if (r.ok && d.ok) {
-      const state = d.complete ? 'Complete annotation exported' : 'Annotation progress exported';
-      showStatus(`${state}: ${d.saved_to} (${d.action_switch_annotated_count}/${d.total_entries})`);
+      const state = d.complete ? 'Complete range exported' : 'Range progress exported';
+      showStatus(
+        `${state} [${d.episode_range.start}-${d.episode_range.end}]: ${d.saved_to} ` +
+        `(${d.action_switch_annotated_count}/${d.total_entries})`
+      );
       fetchInfo();
     } else {
       showStatus(d.error || 'Could not export annotations.', true);
