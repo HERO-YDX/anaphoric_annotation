@@ -105,16 +105,28 @@ python app.py /path/to/humanml_test_set_anaphora.json \
 
 Open <http://127.0.0.1:8888> in a browser after the server starts.
 
-By default, annotations are written next to the input as
-`<input_stem>_annotated.jsonl`. Use `--output` to choose another destination:
+By default, annotations are written outside `meta/` to a repository-relative,
+versioned path:
+
+```text
+annotation_output/<input_stem>_annotated_YYYYMMDDTHHMMSS_microseconds.jsonl
+```
+
+The timestamp is created when the server starts, so a new annotation session
+does not overwrite an earlier export. Repeated saves in the same session safely
+update that session's file. Use `--output` to choose an exact destination:
 
 ```bash
 python app.py input.jsonl videos --output annotations.jsonl
 ```
 
-If the output file already exists and has the same number of entries, records
-marked with `"annotated": true` are loaded automatically so annotation can
-continue from the previous session.
+At startup, the newest timestamped output with the same input stem is loaded
+automatically when it has the same number of entries. For compatibility, the
+old `<input_stem>_annotated.jsonl` beside the input is used when no versioned
+output exists. Records marked with `"annotated": true` are restored so
+annotation can continue from the previous session. Exports are written
+atomically: the previous complete file remains intact if serialization or disk
+writing fails.
 
 ## Tests
 
@@ -125,5 +137,6 @@ python -m unittest discover -s tests -v
 ## Data
 
 Datasets, generated annotations, and video files are not included in this
-repository. The contents of `meta/` are ignored by Git except for its README;
-copy or link the ELMA data into that directory after cloning.
+repository. The contents of `meta/` and generated files in `annotation_output/`
+are ignored by Git except for their README files; copy or link the ELMA data
+into `meta/` after cloning.

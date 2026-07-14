@@ -8,3 +8,7 @@ venv/
 # Local ELMA annotations and videos can be several GB. Keep only the layout doc.
 meta/*
 !meta/README.md
+
+# Versioned annotation exports are local artifacts. Keep only the usage doc.
+annotation_output/*
+!annotation_output/README.md

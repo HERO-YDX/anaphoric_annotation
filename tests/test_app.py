@@ -1,5 +1,8 @@
+import json
+import tempfile
 import unittest
 from collections import OrderedDict
+from datetime import datetime
 from pathlib import Path
 
 import app as annotation_app
@@ -19,6 +22,55 @@ class DefaultPathTests(unittest.TestCase):
             annotation_app.DEFAULT_ELMA_VIDEO_ROOT,
             app_root / "meta" / "test_videos",
         )
+        self.assertEqual(
+            annotation_app.DEFAULT_OUTPUT_ROOT,
+            app_root / "annotation_output",
+        )
+
+    def test_timestamped_output_is_versioned_and_latest_can_be_found(self):
+        first_time = datetime(2026, 7, 14, 12, 30, 45, 123456)
+        second_time = datetime(2026, 7, 14, 12, 31, 5, 654321)
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_root = Path(temporary_directory)
+            first = annotation_app.timestamped_output_path(
+                "/data/input.jsonl", output_root, first_time
+            )
+            first.write_text("{}\n", encoding="utf-8")
+            second = annotation_app.timestamped_output_path(
+                "/data/input.jsonl", output_root, second_time
+            )
+            second.write_text("{}\n", encoding="utf-8")
+            (output_root / "other_annotated_20990101T000000_000000.jsonl").write_text(
+                "{}\n", encoding="utf-8"
+            )
+
+            self.assertEqual(
+                first.name,
+                "input_annotated_20260714T123045_123456.jsonl",
+            )
+            self.assertEqual(
+                annotation_app.latest_timestamped_output(
+                    "/data/input.jsonl", output_root
+                ),
+                second,
+            )
+
+    def test_timestamped_output_uses_a_sequence_on_collision(self):
+        fixed_time = datetime(2026, 7, 14, 12, 30, 45, 123456)
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_root = Path(temporary_directory)
+            first = annotation_app.timestamped_output_path(
+                "/data/input.jsonl", output_root, fixed_time
+            )
+            first.touch()
+            second = annotation_app.timestamped_output_path(
+                "/data/input.jsonl", output_root, fixed_time
+            )
+
+            self.assertEqual(
+                second.name,
+                "input_annotated_20260714T123045_123456_002.jsonl",
+            )
 
 
 class ActionSwitchValidationTests(unittest.TestCase):
@@ -76,6 +128,7 @@ class AnnotationApiTests(unittest.TestCase):
         annotation_app.DATA["modified"] = {}
         annotation_app.DATA["available_videos"] = set()
         annotation_app.DATA["video_paths"] = {}
+        annotation_app.DATA["output_path"] = ""
         self.client = annotation_app.app.test_client()
 
     def test_page_contains_action_switch_controls(self):
@@ -137,6 +190,78 @@ class AnnotationApiTests(unittest.TestCase):
 
         info = self.client.get("/api/info").get_json()
         self.assertEqual(info["action_switch_annotated_count"], 2)
+
+    def test_completed_episode_exports_valid_jsonl_in_original_order(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_path = annotation_app.timestamped_output_path(
+                "/data/input.jsonl",
+                temporary_directory,
+                datetime(2026, 7, 14, 13, 0, 0, 1),
+            )
+            annotation_app.DATA["output_path"] = str(output_path)
+
+            update_response = self.client.post(
+                "/api/update_episode",
+                json={
+                    "segments": [
+                        {
+                            "index": 0,
+                            "action_switch_times": [3.2, 1.1, 3.2],
+                            "no_action_switch": False,
+                        },
+                        {
+                            "index": 1,
+                            "action_switch_times": [],
+                            "no_action_switch": True,
+                        },
+                    ]
+                },
+            )
+            save_response = self.client.post("/api/save")
+
+            self.assertEqual(update_response.status_code, 200)
+            self.assertEqual(save_response.status_code, 200)
+            save_result = save_response.get_json()
+            self.assertTrue(save_result["ok"])
+            self.assertTrue(save_result["complete"])
+            self.assertEqual(save_result["total_entries"], 2)
+            self.assertEqual(save_result["modified_count"], 2)
+            self.assertEqual(save_result["action_switch_annotated_count"], 2)
+            self.assertEqual(save_result["saved_to"], str(output_path))
+
+            exported_entries = [
+                json.loads(line)
+                for line in output_path.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(len(exported_entries), 2)
+            self.assertEqual(
+                [entry["target_segment_id"] for entry in exported_entries],
+                [1, 2],
+            )
+            self.assertEqual(exported_entries[0]["action_switch_times"], [1.1, 3.2])
+            self.assertFalse(exported_entries[0]["no_action_switch"])
+            self.assertEqual(exported_entries[1]["action_switch_times"], [])
+            self.assertTrue(exported_entries[1]["no_action_switch"])
+            self.assertTrue(all(entry["annotated"] for entry in exported_entries))
+            self.assertEqual(list(Path(temporary_directory).glob("*.tmp")), [])
+
+    def test_failed_atomic_export_preserves_existing_file(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_path = Path(temporary_directory) / "annotations.jsonl"
+            original_contents = '{"existing": true}\n'
+            output_path.write_text(original_contents, encoding="utf-8")
+
+            with self.assertRaises(TypeError):
+                annotation_app.write_jsonl_atomic(
+                    output_path,
+                    [{"not_json_serializable": object()}],
+                )
+
+            self.assertEqual(
+                output_path.read_text(encoding="utf-8"),
+                original_contents,
+            )
+            self.assertEqual(list(Path(temporary_directory).glob("*.tmp")), [])
 
 
 if __name__ == "__main__":

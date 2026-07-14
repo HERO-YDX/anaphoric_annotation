@@ -657,11 +657,18 @@ async function saveEpisode() {
 }
 
 async function saveAll() {
-  const r = await fetch(`${BASE}/api/save`, {method: 'POST'});
-  const d = await r.json();
-  if (d.ok) {
-    showStatus(`Saved to file! (${d.modified_count} modified entries)`);
-    fetchInfo();
+  try {
+    const r = await fetch(`${BASE}/api/save`, {method: 'POST'});
+    const d = await r.json();
+    if (r.ok && d.ok) {
+      const state = d.complete ? 'Complete annotation exported' : 'Annotation progress exported';
+      showStatus(`${state}: ${d.saved_to} (${d.action_switch_annotated_count}/${d.total_entries})`);
+      fetchInfo();
+    } else {
+      showStatus(d.error || 'Could not export annotations.', true);
+    }
+  } catch (error) {
+    showStatus(`Could not export annotations: ${error.message}`, true);
   }
 }
 

@@ -9,7 +9,10 @@ import argparse
 import json
 import math
 import os
+import re
+import tempfile
 from collections import OrderedDict
+from datetime import datetime
 from pathlib import Path
 from flask import Flask, render_template, jsonify, request, send_file, abort
 
@@ -32,6 +35,7 @@ APP_ROOT = Path(__file__).resolve().parent
 DEFAULT_META_ROOT = APP_ROOT / "meta"
 DEFAULT_ELMA_JSONL = DEFAULT_META_ROOT / "test_anaphora_per_category4_full_episodes.jsonl"
 DEFAULT_ELMA_VIDEO_ROOT = DEFAULT_META_ROOT / "test_videos"
+DEFAULT_OUTPUT_ROOT = APP_ROOT / "annotation_output"
 DEFAULT_FLOWMDM_ROOT = APP_ROOT / "flowmdm_ours_results"
 DEFAULT_KWARGS_ROOT = DEFAULT_FLOWMDM_ROOT / "flowmdm_results"
 
@@ -49,6 +53,77 @@ def load_jsonl(path):
 def load_json(path):
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def timestamped_output_path(input_path, output_root=DEFAULT_OUTPUT_ROOT, now=None):
+    """Return a collision-safe, timestamped output path for a new app session."""
+    output_root = Path(output_root)
+    timestamp = (now or datetime.now()).strftime("%Y%m%dT%H%M%S_%f")
+    prefix = f"{Path(input_path).stem}_annotated_{timestamp}"
+    candidate = output_root / f"{prefix}.jsonl"
+    sequence = 1
+    while candidate.exists():
+        sequence += 1
+        candidate = output_root / f"{prefix}_{sequence:03d}.jsonl"
+    return candidate
+
+
+def latest_timestamped_output(input_path, output_root=DEFAULT_OUTPUT_ROOT):
+    """Find the newest valid timestamped output for an input file."""
+    output_root = Path(output_root)
+    if not output_root.is_dir():
+        return None
+
+    stem = re.escape(Path(input_path).stem)
+    pattern = re.compile(
+        rf"^{stem}_annotated_(\d{{8}}T\d{{6}}_\d{{6}})(?:_(\d{{3}}))?\.jsonl$"
+    )
+    candidates = []
+    for path in output_root.iterdir():
+        if not path.is_file():
+            continue
+        match = pattern.match(path.name)
+        if not match:
+            continue
+        try:
+            timestamp = datetime.strptime(match.group(1), "%Y%m%dT%H%M%S_%f")
+        except ValueError:
+            continue
+        candidates.append((timestamp, int(match.group(2) or 1), path))
+
+    return max(candidates, default=(None, None, None))[-1]
+
+
+def legacy_output_path(input_path):
+    """Return the pre-versioning output location used by older releases."""
+    input_path = Path(input_path)
+    return input_path.with_name(f"{input_path.stem}_annotated.jsonl")
+
+
+def write_jsonl_atomic(path, entries):
+    """Write JSONL without exposing a truncated or partially written result."""
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=output_path.parent,
+            prefix=f".{output_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+            for entry in entries:
+                temporary_file.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+        os.replace(temporary_path, output_path)
+    except Exception:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        raise
 
 
 def sample_key(index):
@@ -455,16 +530,27 @@ def api_delete_annotation():
 @app.route("/api/save", methods=["POST"])
 def api_save():
     output_path = DATA["output_path"]
-    count = 0
-    with open(output_path, "w", encoding="utf-8") as f:
-        for i, entry in enumerate(DATA["entries"]):
-            if i in DATA["modified"]:
-                out = DATA["modified"][i]
-                count += 1
-            else:
-                out = entry
-            f.write(json.dumps(out, ensure_ascii=False) + "\n")
-    return jsonify({"ok": True, "saved_to": output_path, "modified_count": count})
+    output_entries = [
+        DATA["modified"].get(i, entry)
+        for i, entry in enumerate(DATA["entries"])
+    ]
+    modified_count = len(DATA["modified"])
+    action_switch_annotated_count = sum(
+        is_action_switch_annotated(entry) for entry in output_entries
+    )
+    try:
+        write_jsonl_atomic(output_path, output_entries)
+    except (OSError, TypeError, ValueError) as exc:
+        return jsonify({"ok": False, "error": f"Export failed: {exc}"}), 500
+
+    return jsonify({
+        "ok": True,
+        "saved_to": output_path,
+        "modified_count": modified_count,
+        "total_entries": len(output_entries),
+        "action_switch_annotated_count": action_switch_annotated_count,
+        "complete": action_switch_annotated_count == len(output_entries),
+    })
 
 
 def main():
@@ -498,7 +584,14 @@ def main():
         action="store_true",
         help="Read FlowMDM result layout: humanml JSON + kwargs root + render root",
     )
-    parser.add_argument("-o", "--output", help="Output JSONL path")
+    parser.add_argument(
+        "-o",
+        "--output",
+        help=(
+            "Output JSONL path (default: a timestamped file under "
+            "annotation_output relative to app.py)"
+        ),
+    )
     parser.add_argument("-p", "--port", type=int, default=8888)
     parser.add_argument("--host", default="127.0.0.1")
     args = parser.parse_args()
@@ -513,12 +606,20 @@ def main():
         DATA["available_videos"] = set(os.listdir(DATA["video_root"]))
     print(f"Available videos: {len(DATA['available_videos'])}")
 
+    resume_path = None
     if args.output:
         DATA["output_path"] = os.path.abspath(args.output)
+        if os.path.exists(DATA["output_path"]):
+            resume_path = Path(DATA["output_path"])
     else:
-        base = Path(args.jsonl).stem
-        DATA["output_path"] = os.path.join(
-            os.path.dirname(DATA["jsonl_path"]), f"{base}_annotated.jsonl"
+        DEFAULT_OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+        resume_path = latest_timestamped_output(DATA["jsonl_path"])
+        if resume_path is None:
+            legacy_path = legacy_output_path(DATA["jsonl_path"])
+            if legacy_path.exists():
+                resume_path = legacy_path
+        DATA["output_path"] = str(
+            timestamped_output_path(DATA["jsonl_path"])
         )
 
     # Load entries
@@ -532,9 +633,9 @@ def main():
         DATA["entries"] = load_jsonl(DATA["jsonl_path"])
 
     # Resume from existing output
-    if os.path.exists(DATA["output_path"]):
-        print(f"Resuming from: {DATA['output_path']}")
-        output_entries = load_jsonl(DATA["output_path"])
+    if resume_path is not None:
+        print(f"Resuming from: {resume_path}")
+        output_entries = load_jsonl(resume_path)
         if len(output_entries) == len(DATA["entries"]):
             for i, (orig, out) in enumerate(zip(DATA["entries"], output_entries)):
                 if out.get("annotated"):
