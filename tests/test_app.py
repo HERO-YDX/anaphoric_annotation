@@ -152,6 +152,23 @@ class AnnotationApiTests(unittest.TestCase):
         annotation_app.DATA["output_path"] = ""
         self.client = annotation_app.app.test_client()
 
+    def configure_episode_count(self, count):
+        entries = []
+        episodes = OrderedDict()
+        for index in range(count):
+            episode_id = f"episode-{index + 1:03d}"
+            entries.append({
+                "episode_id": episode_id,
+                "target_segment_id": 1,
+                "target_video_name": f"{episode_id}.mp4",
+                "target_caption": f"caption {index + 1:03d}",
+            })
+            episodes[episode_id] = [index]
+        annotation_app.DATA["entries"] = entries
+        annotation_app.DATA["episodes"] = episodes
+        annotation_app.DATA["episode_ids"] = list(episodes)
+        annotation_app.DATA["modified"] = {}
+
     def test_page_contains_action_switch_controls(self):
         response = self.client.get("/")
 
@@ -159,6 +176,73 @@ class AnnotationApiTests(unittest.TestCase):
         self.assertIn(b"Action switch times", response.data)
         self.assertIn(b"No action switch in this video", response.data)
         self.assertIn(b'data-field="target_caption"', response.data)
+        self.assertIn(b'id="prevPageBtn"', response.data)
+        self.assertIn(b'id="nextPageBtn"', response.data)
+
+    def test_episode_list_returns_100_items_per_page(self):
+        self.configure_episode_count(250)
+
+        first = self.client.get("/api/episode_list?page=1").get_json()
+        second = self.client.get("/api/episode_list?page=2").get_json()
+        third = self.client.get("/api/episode_list?page=3").get_json()
+
+        self.assertEqual(annotation_app.EPISODES_PER_PAGE, 100)
+        self.assertEqual(len(first["results"]), 100)
+        self.assertEqual(len(second["results"]), 100)
+        self.assertEqual(len(third["results"]), 50)
+        self.assertEqual(first["results"][0]["episode_id"], "episode-001")
+        self.assertEqual(second["results"][0]["episode_id"], "episode-101")
+        self.assertEqual(third["results"][-1]["episode_id"], "episode-250")
+        self.assertEqual(
+            third["pagination"],
+            {
+                "page": 3,
+                "page_size": 100,
+                "total_items": 250,
+                "total_pages": 3,
+            },
+        )
+
+        beyond_last = self.client.get("/api/episode_list?page=99").get_json()
+        self.assertEqual(beyond_last["pagination"]["page"], 3)
+        self.assertEqual(len(beyond_last["results"]), 50)
+
+    def test_episode_list_paginates_filtered_and_searched_results(self):
+        self.configure_episode_count(205)
+        for index in range(150):
+            annotation_app.DATA["modified"][index] = {
+                **annotation_app.DATA["entries"][index],
+                "annotated": True,
+            }
+
+        searched = self.client.get(
+            "/api/episode_list?q=caption&page=2"
+        ).get_json()
+        modified = self.client.get(
+            "/api/episode_list?filter=modified&page=2"
+        ).get_json()
+
+        self.assertEqual(searched["pagination"]["total_items"], 205)
+        self.assertEqual(searched["pagination"]["total_pages"], 3)
+        self.assertEqual(searched["results"][0]["episode_id"], "episode-101")
+        self.assertEqual(modified["pagination"]["total_items"], 150)
+        self.assertEqual(modified["pagination"]["total_pages"], 2)
+        self.assertEqual(len(modified["results"]), 50)
+
+    def test_episode_list_rejects_invalid_pages(self):
+        for page in ("0", "-1", "invalid"):
+            with self.subTest(page=page):
+                response = self.client.get(f"/api/episode_list?page={page}")
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("positive integer", response.get_json()["error"])
+
+    def test_episode_detail_reports_full_episode_count(self):
+        self.configure_episode_count(250)
+
+        episode = self.client.get("/api/episode/episode-250").get_json()
+
+        self.assertEqual(episode["episode_index"], 249)
+        self.assertEqual(episode["total_episodes"], 250)
 
     def test_episode_update_is_atomic_when_switch_annotation_is_missing(self):
         response = self.client.post(

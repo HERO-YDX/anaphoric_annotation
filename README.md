@@ -5,7 +5,8 @@ their videos and correcting event-anaphora annotations.
 
 ## Features
 
-- Browse and search episodes and captions.
+- Browse all episodes in a paginated sidebar with 100 episodes per page.
+- Search and filter episodes and captions across the full dataset.
 - Play the video associated with each motion segment.
 - Edit and save `target_caption`, `event_anaphora`,
   `depends_on_segment_ids`, and `keep_body_parts`.

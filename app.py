@@ -38,6 +38,7 @@ DEFAULT_ELMA_VIDEO_ROOT = DEFAULT_META_ROOT / "test_videos"
 DEFAULT_OUTPUT_ROOT = APP_ROOT / "annotation_output"
 DEFAULT_FLOWMDM_ROOT = APP_ROOT / "flowmdm_ours_results"
 DEFAULT_KWARGS_ROOT = DEFAULT_FLOWMDM_ROOT / "flowmdm_results"
+EPISODES_PER_PAGE = 100
 
 
 def load_jsonl(path):
@@ -323,10 +324,16 @@ def api_info():
 
 @app.route("/api/episode_list")
 def api_episode_list():
-    """Return list of episodes with summary info."""
+    """Return a filtered page of episodes with summary and pagination info."""
     q = request.args.get("q", "").strip().lower()
     filter_type = request.args.get("filter", "all")
-    limit = int(request.args.get("limit", 200))
+    try:
+        requested_page = int(request.args.get("page", 1))
+    except (TypeError, ValueError):
+        return jsonify({"error": "page must be a positive integer"}), 400
+    if requested_page < 1:
+        return jsonify({"error": "page must be a positive integer"}), 400
+
     results = []
     for ep_id in DATA["episode_ids"]:
         indices = DATA["episodes"][ep_id]
@@ -379,9 +386,21 @@ def api_episode_list():
             "sample_index": DATA["entries"][indices[0]].get("sample_index"),
             "sample_key": DATA["entries"][indices[0]].get("sample_key", ""),
         })
-        if len(results) >= limit:
-            break
-    return jsonify({"results": results})
+
+    total_items = len(results)
+    total_pages = max(1, math.ceil(total_items / EPISODES_PER_PAGE))
+    page = min(requested_page, total_pages)
+    start = (page - 1) * EPISODES_PER_PAGE
+    page_results = results[start:start + EPISODES_PER_PAGE]
+    return jsonify({
+        "results": page_results,
+        "pagination": {
+            "page": page,
+            "page_size": EPISODES_PER_PAGE,
+            "total_items": total_items,
+            "total_pages": total_pages,
+        },
+    })
 
 
 @app.route("/api/episode/<episode_id>")
@@ -435,6 +454,7 @@ def api_episode(episode_id):
     return jsonify({
         "episode_id": episode_id,
         "episode_index": ep_idx,
+        "total_episodes": len(DATA["episode_ids"]),
         "segments": segments,
         "prev_episode": prev_ep,
         "next_episode": next_ep,

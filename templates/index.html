@@ -37,6 +37,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .filter-btn.active { background: #0f3460; color: #e0e0e0; border-color: #e94560; }
 .list-status { padding: 6px 10px; font-size: 11px; color: #666; border-bottom: 1px solid #0f3460; }
 .episode-list { flex: 1; overflow-y: auto; }
+.empty-list { padding: 24px 10px; color: #666; font-size: 12px; text-align: center; }
+.pagination-bar { display: flex; align-items: center; justify-content: center; gap: 4px; padding: 7px 6px; border-top: 1px solid #0f3460; background: #121c35; flex-shrink: 0; }
+.page-numbers { display: flex; align-items: center; gap: 3px; }
+.page-btn { min-width: 28px; height: 26px; padding: 3px 6px; border: 1px solid #0f3460; border-radius: 3px; background: transparent; color: #999; font-size: 11px; cursor: pointer; }
+.page-btn:hover:not(:disabled) { border-color: #e94560; color: #fff; }
+.page-btn.active { background: #e94560; border-color: #e94560; color: #fff; }
+.page-btn:disabled { opacity: .35; cursor: not-allowed; }
 .ep-item { padding: 8px 10px; border-bottom: 1px solid #0f3460; cursor: pointer; font-size: 12px; transition: background .1s; }
 .ep-item:hover { background: #1a1a3e; }
 .ep-item.active { background: #0f3460; border-left: 3px solid #e94560; }
@@ -172,6 +179,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     </div>
     <div class="list-status" id="listStatus">-</div>
     <div class="episode-list" id="episodeList"></div>
+    <div class="pagination-bar" aria-label="Episode pages">
+      <button class="page-btn" id="prevPageBtn" onclick="goToPage(currentPage - 1)" aria-label="Previous page">&larr;</button>
+      <div class="page-numbers" id="pageNumbers"></div>
+      <button class="page-btn" id="nextPageBtn" onclick="goToPage(currentPage + 1)" aria-label="Next page">&rarr;</button>
+    </div>
   </div>
 
   <div class="right-panel">
@@ -224,6 +236,8 @@ let currentEpisodeId = null;
 let currentEpisodeData = null;
 let searchTimer = null;
 let currentFilter = 'all';
+let currentPage = 1;
+let totalPages = 1;
 let statusTimer = null;
 
 async function fetchInfo() {
@@ -236,14 +250,32 @@ async function fetchInfo() {
 
 async function loadEpisodeList() {
   const q = document.getElementById('searchInput').value;
-  const r = await fetch(`${BASE}/api/episode_list?q=${encodeURIComponent(q)}&filter=${currentFilter}`);
+  const r = await fetch(
+    `${BASE}/api/episode_list?q=${encodeURIComponent(q)}&filter=${currentFilter}&page=${currentPage}`
+  );
   const d = await r.json();
+  if (!r.ok) {
+    showStatus(d.error || 'Could not load the episode list.', true);
+    return;
+  }
+  currentPage = d.pagination.page;
+  totalPages = d.pagination.total_pages;
   renderEpisodeList(d.results);
-  document.getElementById('listStatus').textContent = `${d.results.length} episodes`;
+  renderPagination(d.pagination);
+  const firstItem = d.pagination.total_items
+    ? ((currentPage - 1) * d.pagination.page_size) + 1
+    : 0;
+  const lastItem = firstItem ? firstItem + d.results.length - 1 : 0;
+  document.getElementById('listStatus').textContent =
+    `${d.pagination.total_items} episodes | ${firstItem}-${lastItem} | page ${currentPage}/${totalPages}`;
 }
 
 function renderEpisodeList(items) {
   const list = document.getElementById('episodeList');
+  if (!items.length) {
+    list.innerHTML = '<div class="empty-list">No matching episodes</div>';
+    return;
+  }
   list.innerHTML = items.map(it => {
     let cls = 'ep-item';
     if (it.episode_id === currentEpisodeId) cls += ' active';
@@ -269,6 +301,26 @@ function renderEpisodeList(items) {
   }).join('');
 }
 
+function renderPagination(pagination) {
+  document.getElementById('prevPageBtn').disabled = pagination.page <= 1;
+  document.getElementById('nextPageBtn').disabled = pagination.page >= pagination.total_pages;
+  document.getElementById('pageNumbers').innerHTML = Array.from(
+    {length: pagination.total_pages},
+    (_, index) => {
+      const page = index + 1;
+      return `<button class="page-btn ${page === pagination.page ? 'active' : ''}" ` +
+        `onclick="goToPage(${page})" aria-label="Page ${page}" ` +
+        `${page === pagination.page ? 'aria-current="page"' : ''}>${page}</button>`;
+    }
+  ).join('');
+}
+
+function goToPage(page) {
+  if (page < 1 || page > totalPages || page === currentPage) return;
+  currentPage = page;
+  loadEpisodeList();
+}
+
 async function loadEpisode(episodeId) {
   const r = await fetch(`${BASE}/api/episode/${encodeURIComponent(episodeId)}`);
   if (!r.ok) return;
@@ -277,7 +329,7 @@ async function loadEpisode(episodeId) {
   currentEpisodeData = d;
 
   document.getElementById('epTitle').textContent = episodeId;
-  document.getElementById('epPos').textContent = `(${d.episode_index + 1} / ${document.querySelectorAll('.ep-item').length || '?'})`;
+  document.getElementById('epPos').textContent = `(${d.episode_index + 1} / ${d.total_episodes})`;
   document.getElementById('prevBtn').disabled = !d.prev_episode;
   document.getElementById('nextBtn').disabled = !d.next_episode;
 
@@ -708,11 +760,15 @@ function loadNextEpisode() {
 
 function debounceSearch() {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(loadEpisodeList, 300);
+  searchTimer = setTimeout(() => {
+    currentPage = 1;
+    loadEpisodeList();
+  }, 300);
 }
 
 function setFilter(f) {
   currentFilter = f;
+  currentPage = 1;
   document.querySelectorAll('.filter-btn').forEach(el => {
     el.classList.toggle('active', el.dataset.filter === f);
   });
