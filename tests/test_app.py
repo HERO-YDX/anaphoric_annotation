@@ -227,6 +227,26 @@ class CaptionValidationTests(unittest.TestCase):
                     )
 
 
+class KeepBodyPartsValidationTests(unittest.TestCase):
+    def test_fixed_vocabulary_is_normalized_to_display_order(self):
+        entry = {}
+
+        annotation_app.apply_keep_body_parts(
+            entry,
+            {"keep_body_parts": ["Root", "R.Arm", "Root", "L.Leg"]},
+        )
+
+        self.assertEqual(entry["keep_body_parts"], ["R.Arm", "L.Leg", "Root"])
+
+    def test_unknown_or_non_array_body_parts_are_rejected(self):
+        for body_parts in (["left_hand"], "R.Arm", None):
+            with self.subTest(body_parts=body_parts):
+                with self.assertRaises(ValueError):
+                    annotation_app.apply_keep_body_parts(
+                        {}, {"keep_body_parts": body_parts}
+                    )
+
+
 class AnnotationApiTests(unittest.TestCase):
     def setUp(self):
         annotation_app.app.config.update(TESTING=True)
@@ -291,6 +311,10 @@ class AnnotationApiTests(unittest.TestCase):
         self.assertIn(b"Maintained state", response.data)
         self.assertIn(b"Body parts to maintain", response.data)
         self.assertIn(b"Caption check", response.data)
+        for body_part in annotation_app.KEEP_BODY_PARTS:
+            self.assertIn(f'"{body_part}"'.encode(), response.data)
+        self.assertNotIn(b'"left_hand"', response.data)
+        self.assertNotIn(b'data-field="custom_bp"', response.data)
 
     def test_episode_list_returns_100_items_per_page(self):
         self.configure_episode_count(250)
@@ -519,7 +543,7 @@ class AnnotationApiTests(unittest.TestCase):
                         "target_caption": "first action",
                         "event_anaphora": True,
                         "depends_on_segment_ids": [999],
-                        "keep_body_parts": ["left_hand"],
+                        "keep_body_parts": ["L.Arm"],
                         "action_switch_times": [1.25],
                         "no_action_switch": False,
                     },
@@ -545,6 +569,33 @@ class AnnotationApiTests(unittest.TestCase):
             annotation_app.DATA["modified"][1]["depends_on_segment_ids"],
             [9],
         )
+        self.assertEqual(
+            annotation_app.DATA["modified"][0]["keep_body_parts"],
+            ["L.Arm"],
+        )
+
+    def test_episode_update_rejects_body_parts_outside_fixed_vocabulary(self):
+        response = self.client.post(
+            "/api/update_episode",
+            json={
+                "segments": [
+                    {
+                        "index": 0,
+                        "target_caption": "first action",
+                        "keep_body_parts": ["left_hand"],
+                        "action_switch_times": [1.25],
+                        "no_action_switch": False,
+                    }
+                ]
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(
+            "keep_body_parts may only contain",
+            response.get_json()["details"][0]["error"],
+        )
+        self.assertEqual(annotation_app.DATA["modified"], {})
 
     def test_episode_update_is_atomic_when_caption_is_invalid(self):
         response = self.client.post(

@@ -146,10 +146,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .bp-option input { display: none; }
 .bp-option:has(input:checked) { background: #0f3460; border-color: #4caf50; color: #8f8; }
 .bp-option span { pointer-events: none; }
-.custom-bp-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
-.chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; background: #0f3460; border-radius: 12px; font-size: 12px; color: #e0e0e0; }
-.chip .chip-remove { cursor: pointer; color: #e94560; font-weight: 700; font-size: 14px; line-height: 1; }
-.chip .chip-remove:hover { color: #ff6b7a; }
 
 /* Context info (collapsible) */
 .context-toggle { font-size: 11px; color: #666; cursor: pointer; margin-top: 4px; }
@@ -242,18 +238,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 
 <script>
 const BODY_PARTS = [
-  "head", "neck", "torso", "spine", "pelvis",
-  "left_shoulder", "right_shoulder",
-  "left_arm", "right_arm", "arms",
-  "left_elbow", "right_elbow",
-  "left_wrist", "right_wrist",
-  "left_hand", "right_hand",
-  "left_hip", "right_hip",
-  "left_leg", "right_leg", "legs",
-  "left_knee", "right_knee",
-  "left_ankle", "right_ankle",
-  "left_foot", "right_foot",
-  "upper_body", "lower_body", "full_body",
+  "R.Arm", "L.Arm", "R.Leg", "L.Leg", "Backbone", "Root",
 ];
 
 // Auto-detect base path (works for both / and /annotator/)
@@ -513,18 +498,11 @@ function renderEpisode(data) {
 
             <div class="workflow-step" data-workflow-step="2">
               <div class="workflow-title"><span class="step-number">2</span> Body parts to maintain</div>
-              <div class="workflow-help">Select the body parts involved in the maintained action (for example, running → left_leg and right_leg; holding an object in the left hand → left_hand).</div>
+              <div class="workflow-help">Select from the six fixed body-part groups (for example, running → R.Leg and L.Leg; holding an object with the left arm → L.Arm).</div>
               <div class="field-group">
                 <div class="field-label">keep_body_parts</div>
                 <div class="bp-grid" data-si="${si}">
                   ${BODY_PARTS.map(bp => `<label class="bp-option"><input type="checkbox" value="${bp}" ${bodyParts.includes(bp) ? 'checked' : ''}><span>${bp}</span></label>`).join('')}
-                </div>
-                <div style="display:flex;gap:6px;margin-top:4px;align-items:center">
-                  <input type="text" class="edit-input" data-field="custom_bp" data-si="${si}" placeholder="Custom part..." style="width:160px" onkeydown="if(event.key==='Enter'){event.preventDefault();addCustomBodyPart(${si})}">
-                  <button class="btn btn-sm btn-secondary" onclick="addCustomBodyPart(${si})">Add</button>
-                  <div class="custom-bp-chips" data-si="${si}">
-                    ${bodyParts.filter(bp => !BODY_PARTS.includes(bp)).map(bp => `<span class="chip">${esc(bp)}<span class="chip-remove" onclick="removeCustomBodyPart(${si},'${esc(bp)}')">&times;</span></span>`).join('')}
-                  </div>
                 </div>
               </div>
             </div>
@@ -615,42 +593,9 @@ function toggleContext(si) {
 // Body parts
 function getBodyPartsForSeg(si) {
   const parts = [];
-  // Checked checkboxes
   const grid = document.querySelector(`.bp-grid[data-si="${si}"]`);
   grid.querySelectorAll('input:checked').forEach(cb => parts.push(cb.value));
-  // Custom chips
-  const chips = document.querySelector(`.custom-bp-chips[data-si="${si}"]`);
-  chips.querySelectorAll('.chip').forEach(c => {
-    const v = c.textContent.replace('\u00d7', '').trim();
-    if (v && !parts.includes(v)) parts.push(v);
-  });
   return parts;
-}
-
-function addCustomBodyPart(si) {
-  const input = document.querySelector(`input[data-field="custom_bp"][data-si="${si}"]`);
-  const part = input.value.trim().toLowerCase();
-  if (!part) return;
-  const existing = getBodyPartsForSeg(si);
-  if (existing.includes(part)) { input.value = ''; return; }
-  // If it's a predefined part, just check the checkbox
-  const grid = document.querySelector(`.bp-grid[data-si="${si}"]`);
-  const cb = grid.querySelector(`input[value="${part}"]`);
-  if (cb) { cb.checked = true; input.value = ''; return; }
-  // Otherwise add as custom chip
-  const chips = document.querySelector(`.custom-bp-chips[data-si="${si}"]`);
-  const chip = document.createElement('span');
-  chip.className = 'chip';
-  chip.innerHTML = `${esc(part)}<span class="chip-remove" onclick="removeCustomBodyPart(${si},'${esc(part)}')">&times;</span>`;
-  chips.appendChild(chip);
-  input.value = '';
-}
-
-function removeCustomBodyPart(si, part) {
-  const chips = document.querySelector(`.custom-bp-chips[data-si="${si}"]`);
-  chips.querySelectorAll('.chip').forEach(c => {
-    if (c.textContent.replace('\u00d7', '').trim() === part) c.remove();
-  });
 }
 
 // Action-switch time annotation

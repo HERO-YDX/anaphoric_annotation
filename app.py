@@ -39,6 +39,14 @@ DEFAULT_OUTPUT_ROOT = APP_ROOT / "annotation_output"
 DEFAULT_FLOWMDM_ROOT = APP_ROOT / "flowmdm_ours_results"
 DEFAULT_KWARGS_ROOT = DEFAULT_FLOWMDM_ROOT / "flowmdm_results"
 EPISODES_PER_PAGE = 100
+KEEP_BODY_PARTS = (
+    "R.Arm",
+    "L.Arm",
+    "R.Leg",
+    "L.Leg",
+    "Backbone",
+    "Root",
+)
 
 
 def load_jsonl(path):
@@ -421,6 +429,25 @@ def apply_target_caption(entry, payload):
     return entry
 
 
+def apply_keep_body_parts(entry, payload):
+    """Apply the fixed keep-body-parts vocabulary in canonical display order."""
+    if "keep_body_parts" not in payload:
+        return entry
+
+    body_parts = payload["keep_body_parts"]
+    if not isinstance(body_parts, list):
+        raise ValueError("keep_body_parts must be a JSON array")
+    invalid_parts = [part for part in body_parts if part not in KEEP_BODY_PARTS]
+    if invalid_parts:
+        allowed = ", ".join(KEEP_BODY_PARTS)
+        raise ValueError(f"keep_body_parts may only contain: {allowed}")
+
+    entry["keep_body_parts"] = [
+        part for part in KEEP_BODY_PARTS if part in body_parts
+    ]
+    return entry
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -640,10 +667,9 @@ def api_update():
     modified_entry = dict(base)
     if "event_anaphora" in data:
         modified_entry["event_anaphora"] = bool(data["event_anaphora"])
-    # depends_on_segment_ids editing is intentionally disabled; preserve base value.
-    if "keep_body_parts" in data:
-        modified_entry["keep_body_parts"] = data["keep_body_parts"]
     try:
+        # depends_on_segment_ids editing is intentionally disabled; preserve base value.
+        apply_keep_body_parts(modified_entry, data)
         apply_target_caption(modified_entry, data)
         apply_action_switch_annotation(modified_entry, data)
     except ValueError as exc:
@@ -679,10 +705,9 @@ def api_update_episode():
         modified_entry = dict(base)
         if "event_anaphora" in seg:
             modified_entry["event_anaphora"] = bool(seg["event_anaphora"])
-        # depends_on_segment_ids editing is intentionally disabled; preserve base value.
-        if "keep_body_parts" in seg:
-            modified_entry["keep_body_parts"] = seg["keep_body_parts"]
         try:
+            # depends_on_segment_ids editing is intentionally disabled; preserve base value.
+            apply_keep_body_parts(modified_entry, seg)
             apply_target_caption(modified_entry, seg)
             apply_action_switch_annotation(modified_entry, seg)
         except ValueError as exc:

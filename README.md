@@ -92,7 +92,8 @@ For each segment:
 
 1. Decide whether the action contains a state that must be maintained while
    another action happens. If so, enable `event_anaphora`.
-2. Select the maintained state's body parts in `keep_body_parts`.
+2. Select the maintained state's body parts in `keep_body_parts`. The fixed
+   choices are `R.Arm`, `L.Arm`, `R.Leg`, `L.Leg`, `Backbone`, and `Root`.
 3. Check that `target_caption` explicitly describes the maintained state and
    edit it when needed.
 4. Check for an action transition and mark its video time, or explicitly select
