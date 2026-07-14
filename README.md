@@ -6,6 +6,7 @@ their videos and correcting event-anaphora annotations.
 ## Features
 
 - Browse all episodes in a paginated sidebar with 100 episodes per page.
+- Restrict each annotator to a shareable, inclusive episode assignment range.
 - Search and filter episodes and captions across the full dataset.
 - Play the video associated with each motion segment.
 - Edit and save `target_caption`, `event_anaphora`, and `keep_body_parts`.
@@ -48,6 +49,22 @@ The defaults are resolved relative to the directory containing `app.py`, not
 the current shell directory. This means the same command and repository layout
 remain portable after cloning or moving the project. See [`meta/README.md`](meta/README.md)
 for the complete local data layout.
+
+### Assigning episode ranges
+
+Use the **Episode assignment range** controls in the sidebar to restrict an
+annotator to a subset of the dataset. Positions are 1-based and inclusive, so
+`200-300` contains 101 episodes; use `201-300` for exactly 100 episodes.
+
+Applying a range updates the URL, for example:
+
+```text
+http://127.0.0.1:8888/?range_start=201&range_end=300
+```
+
+The sidebar, search, filters, pagination, and episode Previous/Next navigation
+stay inside the selected range. **Save All to File** still exports the complete
+JSONL in original order, including modifications made within the assignment.
 
 ### Custom flat JSONL and video directory
 

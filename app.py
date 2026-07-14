@@ -206,6 +206,25 @@ def build_episode_index(entries):
     return episodes
 
 
+def parse_episode_range(args, total_episodes):
+    """Parse a 1-based inclusive episode assignment range."""
+    if total_episodes == 0:
+        return 1, 0
+
+    try:
+        range_start = int(args.get("range_start", 1))
+        range_end = int(args.get("range_end", total_episodes))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("episode range values must be integers") from exc
+
+    if not 1 <= range_start <= range_end <= total_episodes:
+        raise ValueError(
+            "episode range must satisfy "
+            f"1 <= range_start <= range_end <= {total_episodes}"
+        )
+    return range_start, range_end
+
+
 def resolve_video_path(video_name):
     """Find videos either from explicit FlowMDM mapping or a flat video root."""
     if video_name in DATA["video_paths"]:
@@ -334,8 +353,16 @@ def api_episode_list():
     if requested_page < 1:
         return jsonify({"error": "page must be a positive integer"}), 400
 
+    try:
+        range_start, range_end = parse_episode_range(
+            request.args, len(DATA["episode_ids"])
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
     results = []
-    for ep_id in DATA["episode_ids"]:
+    range_episode_ids = DATA["episode_ids"][range_start - 1:range_end]
+    for episode_number, ep_id in enumerate(range_episode_ids, start=range_start):
         indices = DATA["episodes"][ep_id]
         has_modified = any(i in DATA["modified"] for i in indices)
         all_modified = all(i in DATA["modified"] for i in indices)
@@ -375,6 +402,7 @@ def api_episode_list():
 
         results.append({
             "episode_id": ep_id,
+            "episode_number": episode_number,
             "num_segments": len(indices),
             "first_index": indices[0],
             "has_modified": has_modified,
@@ -400,6 +428,11 @@ def api_episode_list():
             "total_items": total_items,
             "total_pages": total_pages,
         },
+        "range": {
+            "start": range_start,
+            "end": range_end,
+            "total_items": len(range_episode_ids),
+        },
     })
 
 
@@ -408,6 +441,17 @@ def api_episode(episode_id):
     """Return all segments of an episode with current (possibly modified) values."""
     if episode_id not in DATA["episodes"]:
         abort(404)
+
+    try:
+        range_start, range_end = parse_episode_range(
+            request.args, len(DATA["episode_ids"])
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    range_episode_ids = DATA["episode_ids"][range_start - 1:range_end]
+    if episode_id not in range_episode_ids:
+        abort(404, "Episode is outside the selected assignment range")
+
     indices = DATA["episodes"][episode_id]
     segments = []
     for i in indices:
@@ -449,12 +493,21 @@ def api_episode(episode_id):
         })
     # Find episode position
     ep_idx = DATA["episode_ids"].index(episode_id)
-    prev_ep = DATA["episode_ids"][ep_idx - 1] if ep_idx > 0 else None
-    next_ep = DATA["episode_ids"][ep_idx + 1] if ep_idx < len(DATA["episode_ids"]) - 1 else None
+    range_idx = range_episode_ids.index(episode_id)
+    prev_ep = range_episode_ids[range_idx - 1] if range_idx > 0 else None
+    next_ep = (
+        range_episode_ids[range_idx + 1]
+        if range_idx < len(range_episode_ids) - 1
+        else None
+    )
     return jsonify({
         "episode_id": episode_id,
         "episode_index": ep_idx,
         "total_episodes": len(DATA["episode_ids"]),
+        "range_position": range_idx + 1,
+        "range_total": len(range_episode_ids),
+        "range_start": range_start,
+        "range_end": range_end,
         "segments": segments,
         "prev_episode": prev_ep,
         "next_episode": next_ep,

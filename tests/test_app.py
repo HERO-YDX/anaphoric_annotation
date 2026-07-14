@@ -178,6 +178,9 @@ class AnnotationApiTests(unittest.TestCase):
         self.assertIn(b'data-field="target_caption"', response.data)
         self.assertIn(b'id="prevPageBtn"', response.data)
         self.assertIn(b'id="nextPageBtn"', response.data)
+        self.assertIn(b'id="rangeStartInput"', response.data)
+        self.assertIn(b'id="rangeEndInput"', response.data)
+        self.assertIn(b"Episode assignment range", response.data)
         workflow_markers = [
             response.data.index(f'data-workflow-step="{step}"'.encode())
             for step in range(1, 5)
@@ -238,12 +241,64 @@ class AnnotationApiTests(unittest.TestCase):
         self.assertEqual(modified["pagination"]["total_pages"], 2)
         self.assertEqual(len(modified["results"]), 50)
 
+    def test_episode_list_is_limited_to_inclusive_assignment_range(self):
+        self.configure_episode_count(500)
+
+        first = self.client.get(
+            "/api/episode_list?range_start=200&range_end=300&page=1"
+        ).get_json()
+        second = self.client.get(
+            "/api/episode_list?range_start=200&range_end=300&page=2"
+        ).get_json()
+
+        self.assertEqual(first["range"], {"start": 200, "end": 300, "total_items": 101})
+        self.assertEqual(first["pagination"]["total_items"], 101)
+        self.assertEqual(first["pagination"]["total_pages"], 2)
+        self.assertEqual(len(first["results"]), 100)
+        self.assertEqual(len(second["results"]), 1)
+        self.assertEqual(first["results"][0]["episode_id"], "episode-200")
+        self.assertEqual(first["results"][0]["episode_number"], 200)
+        self.assertEqual(first["results"][-1]["episode_id"], "episode-299")
+        self.assertEqual(second["results"][0]["episode_id"], "episode-300")
+        self.assertEqual(second["results"][0]["episode_number"], 300)
+
+    def test_search_only_uses_episodes_inside_assignment_range(self):
+        self.configure_episode_count(500)
+
+        outside = self.client.get(
+            "/api/episode_list?range_start=200&range_end=300&q=caption%20199"
+        ).get_json()
+        inside = self.client.get(
+            "/api/episode_list?range_start=200&range_end=300&q=caption%20250"
+        ).get_json()
+
+        self.assertEqual(outside["pagination"]["total_items"], 0)
+        self.assertEqual(outside["results"], [])
+        self.assertEqual(
+            [result["episode_id"] for result in inside["results"]],
+            ["episode-250"],
+        )
+
     def test_episode_list_rejects_invalid_pages(self):
         for page in ("0", "-1", "invalid"):
             with self.subTest(page=page):
                 response = self.client.get(f"/api/episode_list?page={page}")
                 self.assertEqual(response.status_code, 400)
                 self.assertIn("positive integer", response.get_json()["error"])
+
+    def test_episode_list_rejects_invalid_assignment_ranges(self):
+        self.configure_episode_count(500)
+        invalid_queries = (
+            "range_start=0&range_end=100",
+            "range_start=1&range_end=501",
+            "range_start=300&range_end=200",
+            "range_start=invalid&range_end=300",
+        )
+        for query in invalid_queries:
+            with self.subTest(query=query):
+                response = self.client.get(f"/api/episode_list?{query}")
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("episode range", response.get_json()["error"])
 
     def test_episode_detail_reports_full_episode_count(self):
         self.configure_episode_count(250)
@@ -252,6 +307,33 @@ class AnnotationApiTests(unittest.TestCase):
 
         self.assertEqual(episode["episode_index"], 249)
         self.assertEqual(episode["total_episodes"], 250)
+
+    def test_episode_navigation_stays_inside_assignment_range(self):
+        self.configure_episode_count(500)
+
+        first = self.client.get(
+            "/api/episode/episode-200?range_start=200&range_end=300"
+        ).get_json()
+        middle = self.client.get(
+            "/api/episode/episode-250?range_start=200&range_end=300"
+        ).get_json()
+        last = self.client.get(
+            "/api/episode/episode-300?range_start=200&range_end=300"
+        ).get_json()
+        outside = self.client.get(
+            "/api/episode/episode-199?range_start=200&range_end=300"
+        )
+
+        self.assertIsNone(first["prev_episode"])
+        self.assertEqual(first["next_episode"], "episode-201")
+        self.assertEqual(first["range_position"], 1)
+        self.assertEqual(first["range_total"], 101)
+        self.assertEqual(middle["range_position"], 51)
+        self.assertEqual(middle["prev_episode"], "episode-249")
+        self.assertEqual(middle["next_episode"], "episode-251")
+        self.assertEqual(last["prev_episode"], "episode-299")
+        self.assertIsNone(last["next_episode"])
+        self.assertEqual(outside.status_code, 404)
 
     def test_episode_update_is_atomic_when_switch_annotation_is_missing(self):
         response = self.client.post(

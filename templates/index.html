@@ -28,6 +28,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 
 /* Left panel */
 .left-panel { width: 320px; display: flex; flex-direction: column; border-right: 1px solid #0f3460; background: #16213e; flex-shrink: 0; }
+.assignment-range { padding: 8px; border-bottom: 1px solid #0f3460; background: #121c35; }
+.assignment-title { margin-bottom: 5px; color: #bbb; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
+.assignment-controls { display: flex; align-items: center; gap: 5px; }
+.assignment-controls input { width: 62px; padding: 5px 6px; border: 1px solid #0f3460; border-radius: 3px; background: #1a1a2e; color: #eee; font-size: 12px; }
+.assignment-controls input:focus { outline: none; border-color: #e94560; }
+.assignment-separator { color: #777; font-size: 12px; }
+.assignment-help { margin-top: 5px; color: #667085; font-size: 10px; line-height: 1.35; }
 .search-box { padding: 8px; border-bottom: 1px solid #0f3460; }
 .search-box input { width: 100%; padding: 7px 10px; border: 1px solid #0f3460; border-radius: 4px; background: #1a1a2e; color: #e0e0e0; font-size: 13px; }
 .search-box input:focus { outline: none; border-color: #e94560; }
@@ -49,6 +56,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .ep-item.active { background: #0f3460; border-left: 3px solid #e94560; }
 .ep-item.modified { border-left: 3px solid #4caf50; }
 .ep-item .ep-name { font-weight: 600; color: #ccc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ep-number { color: #e94560; font-variant-numeric: tabular-nums; }
 .ep-item .ep-meta { color: #666; font-size: 11px; margin-top: 2px; }
 .ep-item .ep-meta .tag { display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 10px; margin-right: 4px; }
 .tag-cat { background: #1a3a5c; color: #7fb3e0; }
@@ -174,6 +182,17 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 
 <div class="main">
   <div class="left-panel">
+    <div class="assignment-range">
+      <div class="assignment-title">Episode assignment range</div>
+      <div class="assignment-controls">
+        <input type="number" id="rangeStartInput" min="1" value="1" aria-label="First episode number" onkeydown="if(event.key==='Enter'){event.preventDefault();applyEpisodeRange()}">
+        <span class="assignment-separator">to</span>
+        <input type="number" id="rangeEndInput" min="1" aria-label="Last episode number" onkeydown="if(event.key==='Enter'){event.preventDefault();applyEpisodeRange()}">
+        <button class="btn btn-sm btn-primary" onclick="applyEpisodeRange()">Apply</button>
+        <button class="btn btn-sm btn-secondary" onclick="resetEpisodeRange()">All</button>
+      </div>
+      <div class="assignment-help">1-based and inclusive. For exactly 100 episodes, use 1–100, 101–200, 201–300, etc. The URL can be shared.</div>
+    </div>
     <div class="search-box">
       <input type="text" id="searchInput" placeholder="Search episode / caption / category..." oninput="debounceSearch()">
     </div>
@@ -239,12 +258,18 @@ const BODY_PARTS = [
 
 // Auto-detect base path (works for both / and /annotator/)
 const BASE = window.location.pathname.replace(/\/$/, '');
+const INITIAL_PARAMS = new URLSearchParams(window.location.search);
+const INITIAL_RANGE_START = Number.parseInt(INITIAL_PARAMS.get('range_start'), 10);
+const INITIAL_RANGE_END = Number.parseInt(INITIAL_PARAMS.get('range_end'), 10);
 let currentEpisodeId = null;
 let currentEpisodeData = null;
 let searchTimer = null;
 let currentFilter = 'all';
 let currentPage = 1;
 let totalPages = 1;
+let totalEpisodeCount = 0;
+let episodeRangeStart = Number.isInteger(INITIAL_RANGE_START) ? INITIAL_RANGE_START : 1;
+let episodeRangeEnd = Number.isInteger(INITIAL_RANGE_END) ? INITIAL_RANGE_END : null;
 let statusTimer = null;
 
 async function fetchInfo() {
@@ -253,13 +278,37 @@ async function fetchInfo() {
   document.getElementById('globalInfo').textContent =
     `${d.total_entries} entries | ${d.total_episodes} episodes | ${d.modified_count} modified | ` +
     `${d.action_switch_annotated_count}/${d.total_entries} switch annotated`;
+  totalEpisodeCount = d.total_episodes;
+  if (
+    episodeRangeStart < 1 ||
+    episodeRangeStart > totalEpisodeCount ||
+    episodeRangeEnd === null ||
+    episodeRangeEnd < episodeRangeStart ||
+    episodeRangeEnd > totalEpisodeCount
+  ) {
+    episodeRangeStart = 1;
+    episodeRangeEnd = totalEpisodeCount;
+  }
+  const startInput = document.getElementById('rangeStartInput');
+  const endInput = document.getElementById('rangeEndInput');
+  startInput.max = totalEpisodeCount;
+  endInput.max = totalEpisodeCount;
+  startInput.value = episodeRangeStart;
+  endInput.value = episodeRangeEnd;
+  syncEpisodeRangeUrl();
+  return d;
 }
 
 async function loadEpisodeList() {
   const q = document.getElementById('searchInput').value;
-  const r = await fetch(
-    `${BASE}/api/episode_list?q=${encodeURIComponent(q)}&filter=${currentFilter}&page=${currentPage}`
-  );
+  const params = new URLSearchParams({
+    q,
+    filter: currentFilter,
+    page: currentPage,
+    range_start: episodeRangeStart,
+    range_end: episodeRangeEnd,
+  });
+  const r = await fetch(`${BASE}/api/episode_list?${params}`);
   const d = await r.json();
   if (!r.ok) {
     showStatus(d.error || 'Could not load the episode list.', true);
@@ -274,7 +323,8 @@ async function loadEpisodeList() {
     : 0;
   const lastItem = firstItem ? firstItem + d.results.length - 1 : 0;
   document.getElementById('listStatus').textContent =
-    `${d.pagination.total_items} episodes | ${firstItem}-${lastItem} | page ${currentPage}/${totalPages}`;
+    `assigned ${d.range.start}-${d.range.end} (${d.range.total_items}) | ` +
+    `${d.pagination.total_items} matches | ${firstItem}-${lastItem} | page ${currentPage}/${totalPages}`;
 }
 
 function renderEpisodeList(items) {
@@ -302,7 +352,7 @@ function renderEpisodeList(items) {
       tags += `<span class="tag tag-pending">switch ${it.switch_annotated_count}/${it.num_segments}</span>`;
     }
     return `<div class="${cls}" onclick="loadEpisode('${esc(it.episode_id)}')">
-      <div class="ep-name">${esc(it.episode_id)}</div>
+      <div class="ep-name"><span class="ep-number">#${it.episode_number}</span> ${esc(it.episode_id)}</div>
       <div class="ep-meta">${it.num_segments} segments ${tags}</div>
     </div>`;
   }).join('');
@@ -328,15 +378,80 @@ function goToPage(page) {
   loadEpisodeList();
 }
 
+function syncEpisodeRangeUrl() {
+  const params = new URLSearchParams(window.location.search);
+  if (episodeRangeStart === 1 && episodeRangeEnd === totalEpisodeCount) {
+    params.delete('range_start');
+    params.delete('range_end');
+  } else {
+    params.set('range_start', episodeRangeStart);
+    params.set('range_end', episodeRangeEnd);
+  }
+  const query = params.toString();
+  window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}`);
+}
+
+function clearEpisodeSelection() {
+  currentEpisodeId = null;
+  currentEpisodeData = null;
+  document.getElementById('epTitle').textContent = 'Select an episode';
+  document.getElementById('epPos').textContent = '';
+  document.getElementById('prevBtn').disabled = true;
+  document.getElementById('nextBtn').disabled = true;
+  document.getElementById('episodeContent').innerHTML =
+    '<div style="text-align:center; padding:80px; color:#555">Select an episode from the assigned range.</div>';
+}
+
+function applyEpisodeRange() {
+  const start = Number.parseInt(document.getElementById('rangeStartInput').value, 10);
+  const end = Number.parseInt(document.getElementById('rangeEndInput').value, 10);
+  if (
+    !Number.isInteger(start) ||
+    !Number.isInteger(end) ||
+    start < 1 ||
+    start > end ||
+    end > totalEpisodeCount
+  ) {
+    showStatus(`Range must satisfy 1 <= start <= end <= ${totalEpisodeCount}.`, true);
+    return;
+  }
+
+  episodeRangeStart = start;
+  episodeRangeEnd = end;
+  currentPage = 1;
+  syncEpisodeRangeUrl();
+  const currentPosition = currentEpisodeData ? currentEpisodeData.episode_index + 1 : null;
+  if (currentPosition && currentPosition >= start && currentPosition <= end) {
+    loadEpisode(currentEpisodeId);
+  } else if (currentPosition) {
+    clearEpisodeSelection();
+  }
+  loadEpisodeList();
+}
+
+function resetEpisodeRange() {
+  document.getElementById('rangeStartInput').value = 1;
+  document.getElementById('rangeEndInput').value = totalEpisodeCount;
+  applyEpisodeRange();
+}
+
 async function loadEpisode(episodeId) {
-  const r = await fetch(`${BASE}/api/episode/${encodeURIComponent(episodeId)}`);
+  const params = new URLSearchParams({
+    range_start: episodeRangeStart,
+    range_end: episodeRangeEnd,
+  });
+  const r = await fetch(`${BASE}/api/episode/${encodeURIComponent(episodeId)}?${params}`);
   if (!r.ok) return;
   const d = await r.json();
   currentEpisodeId = episodeId;
   currentEpisodeData = d;
 
   document.getElementById('epTitle').textContent = episodeId;
-  document.getElementById('epPos').textContent = `(${d.episode_index + 1} / ${d.total_episodes})`;
+  const taskPosition = d.range_total === d.total_episodes
+    ? ''
+    : ` | assigned ${d.range_position}/${d.range_total}`;
+  document.getElementById('epPos').textContent =
+    `(#${d.episode_index + 1}/${d.total_episodes}${taskPosition})`;
   document.getElementById('prevBtn').disabled = !d.prev_episode;
   document.getElementById('nextBtn').disabled = !d.next_episode;
 
@@ -815,8 +930,16 @@ document.addEventListener('keydown', (e) => {
 });
 
 // Init
-fetchInfo();
-loadEpisodeList();
+async function init() {
+  try {
+    await fetchInfo();
+    await loadEpisodeList();
+  } catch (error) {
+    showStatus(`Could not initialize the annotator: ${error.message}`, true);
+  }
+}
+
+init();
 </script>
 </body>
 </html>
